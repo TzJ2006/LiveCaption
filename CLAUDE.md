@@ -56,7 +56,7 @@ search-content with start_time="14:30", end_time="15:00", content_type="audio", 
 
 ## Response Guidelines
 
-1. **Always check if Screenpipe is running** before making queries. If MCP tools fail, suggest: "Please make sure Screenpipe is running (screenpipe record or open the app)."
+1. **Always check if Screenpipe is running** before making queries. If MCP tools fail, suggest: "Please make sure Screenpipe is running (screenpipe or open the app)."
 
 2. **Use the meeting's language**: If the meeting is in Chinese, respond in Chinese. If mixed, use both naturally.
 
@@ -207,7 +207,7 @@ cat ~/.meeting-helper/qa-log/2026-04-09.md
 ## Screenpipe Not Running?
 
 If MCP tools return errors, guide the user:
-1. Start Screenpipe: `screenpipe record` (CLI) or open the desktop app
+1. Start Screenpipe: `screenpipe` (CLI) or open the desktop app
 2. Wait 10 seconds for initialization
 3. Verify: `curl http://localhost:3030/health`
 4. Check permissions: Screen Recording + Accessibility + Microphone (macOS)

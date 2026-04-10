@@ -64,7 +64,7 @@ If you prefer to set up manually:
 # 1. Install & start Screenpipe
 # Download from https://screenpi.pe/download or:
 brew install screenpipe  # macOS
-screenpipe record        # start recording
+screenpipe        # start recording
 
 # 2. Add MCP server to Claude Code
 claude mcp add screenpipe -- npx -y screenpipe-mcp

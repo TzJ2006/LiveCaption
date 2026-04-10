@@ -27,7 +27,7 @@ if curl -s --connect-timeout 3 http://localhost:3030/health >/dev/null 2>&1; the
     check_pass "Screenpipe is running"
 else
     check_fail "Screenpipe not reachable at localhost:3030"
-    echo "         Start it: screenpipe record (or open the desktop app)"
+    echo "         Start it: screenpipe (or open the desktop app)"
 fi
 
 # ── 2. Meeting detection ─────────────────────────────────────────────────────
