@@ -51,9 +51,15 @@ open https://screenpi.pe/download
 npx screenpipe@latest
 ```
 
-**方式 C：Homebrew（不推荐，已弃用）**
+**方式 C：Homebrew（已弃用，不推荐）**
 ```bash
-brew install screenpipe  # 可能有说话人识别模型问题
+brew install screenpipe  # 有说话人识别模型问题，不建议使用
+```
+
+**如果已安装 Homebrew 版本，建议卸载：**
+```bash
+brew uninstall screenpipe
+rm -rf ~/Library/Caches/screenpipe/models/  # 删除损坏的模型
 ```
 
 ### 4. 运行安装脚本
