@@ -37,15 +37,23 @@ cd MeetingHelper
 
 ### 3. 安装 Screenpipe
 
-使用 Homebrew 安装：
+**⚠️ 重要提示**：Homebrew 中的 Screenpipe（v0.2.13）已被标记为已弃用且存在模型加载问题。推荐使用以下任一方式：
+
+**方式 A：桌面应用（推荐）**
 ```bash
-brew install screenpipe
+# 从官网下载 .dmg 文件
+open https://screenpi.pe/download
 ```
 
-安装完成后验证：
+**方式 B：使用 npx 运行最新版本**
 ```bash
-which screenpipe
-# 输出：/opt/homebrew/bin/screenpipe
+# 无需安装，直接运行最新版本
+npx screenpipe@latest
+```
+
+**方式 C：Homebrew（不推荐，已弃用）**
+```bash
+brew install screenpipe  # 可能有说话人识别模型问题
 ```
 
 ### 4. 运行安装脚本
@@ -87,12 +95,17 @@ Results: 4 passed, 1 failed, 3 warnings
 ### 启动 Screenpipe
 
 在后台启动 Screenpipe 录制：
+
 ```bash
-# 方式 1：CLI 启动（推荐用于测试）
-screenpipe
+# 方式 1：使用 npx（推荐，最新版本）
+bash scripts/start-screenpipe-npx.sh
+# 或直接运行：npx screenpipe@latest
 
 # 方式 2：桌面应用（如果已安装）
 open -a Screenpipe
+
+# 方式 3：Homebrew CLI（已弃用，可能有模型问题）
+screenpipe
 ```
 
 等待 10-15 秒让 Screenpipe 初始化，然后验证：
@@ -155,8 +168,14 @@ MeetingHelper/
 
 ## 常见问题
 
+### Q: 看到 "Protobuf parsing failed" 或 "Load model failed" 错误？
+A: 这是 Homebrew 版本（v0.2.13）的已知问题。说话人识别模型损坏。解决方案：
+- **推荐**：下载桌面应用：https://screenpi.pe/download
+- **或**：使用 `npx screenpipe@latest` 运行最新版本
+- **临时解决**：Screenpipe 仍能录制和转录，只是无法区分不同说话人
+
 ### Q: 为什么健康检查显示失败？
-A: 如果看到 "Screenpipe not reachable at localhost:3030"，说明 Screenpipe 没有运行。运行 `screenpipe` 启动它。
+A: 如果看到 "Screenpipe not reachable at localhost:3030"，说明 Screenpipe 没有运行。运行 `screenpipe` 或 `npx screenpipe@latest` 启动它。
 
 ### Q: 混合中英文转录准确度如何？
 A: Whisper 按 ~30 秒的块检测语言，不是按句子。句子中切换语言（如 "Let's discuss the 技术方案"）可能在该块产生错误。如果某个时间段的转录质量差，可以事后重新转录。
