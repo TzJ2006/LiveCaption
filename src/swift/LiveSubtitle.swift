@@ -169,6 +169,10 @@ final class TranscriptWriter {
         }
     }
 
+    func close() {
+        handles.values.forEach { $0.closeFile() }
+    }
+
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -800,6 +804,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var micCapture: MicCapture?
     private var systemCapture: SystemCapture?
     private var debugLevels: [Source: Float] = [:]
+    private var pendingTexts: [Source: String] = [:]
     private var lastDebugDraw = Date.distantPast
 
     init(config: Config) {
@@ -986,11 +991,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             self.subtitle?.update(text, source: source, final: final)
             if final {
                 self.writer.append(source: source, text: text)
+                self.pendingTexts[source] = nil
+            } else {
+                self.pendingTexts[source] = text
             }
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        pendingTexts.forEach { writer.append(source: $0.key, text: $0.value) }
+        writer.close()
         debugRecorder?.close()
     }
 }
