@@ -1,206 +1,153 @@
-# Meeting Helper
+# MeetingHelper
 
-AI-powered meeting assistant built on [Screenpipe](https://github.com/screenpipe/screenpipe) + [Claude Code CLI](https://claude.ai/code).
+MeetingHelper 是一个轻量的 macOS 实时字幕工具。它可以同时捕获麦克风和当前系统声音，在屏幕底部显示字幕，并把文字和调试音频保存在项目目录中。
 
-Captures meeting audio and screen, generates transcripts, provides real-time Q&A, and produces comprehensive summaries — all running locally on your machine.
+## 功能
 
-## How It Works
+- 麦克风、系统声音或双音源捕获
+- 双音源左右分栏：左侧 speaker，右侧 microphone
+- 本地 Sherpa-ONNX 中英双语流式识别
+- Apple Speech 实时识别和音频文件转录
+- 可选择、复制、滚动、隐藏的悬浮字幕窗口
+- 分别保存麦克风与系统声音的 transcript
+- Debug 模式保存 WAV，便于检查收音与离线转录
+- Sherpa 模型缺失时自动安装到项目目录
 
-```
-Screenpipe (background)          Claude Code CLI (your terminal)
-┌──────────────────────┐         ┌──────────────────────────┐
-│ Mic + System Audio   │         │ "What did we discuss?"   │
-│ Screen Capture + OCR │◄──MCP──►│ "Generate meeting summary"│
-│ Whisper Transcription│         │ "What did Alice say?"    │
-│ Meeting Detection    │         │ "List action items"      │
-└──────────────────────┘         └──────────────────────────┘
-```
+## 系统要求
 
-1. **Screenpipe** runs in the background capturing everything: mic audio, system audio (Zoom/Teams/Meet), screen content, and generating transcripts via Whisper
-2. **Claude Code CLI** connects to Screenpipe via MCP (Model Context Protocol)
-3. You ask questions in natural language — Claude searches your meeting data and responds
+- macOS 13 或更高版本
+- Xcode Command Line Tools（需要 `xcrun swiftc`）
+- Python 3（仅 Sherpa/Hugging Face 模式需要）
+- 麦克风权限（使用 mic 时）
+- 屏幕录制权限（捕获 system audio 时）
+- 语音识别权限（使用 Apple Speech 时）
 
-## Features
+## 快速开始
 
-- **Audio capture**: Microphone + system audio (works with Zoom, Teams, Meet, Slack)
-- **Real-time transcription**: Whisper large-v3-turbo with Chinese-English support
-- **Meeting detection**: Auto-detects when you join/leave meetings
-- **Speaker identification**: Voice-based diarization with calendar-assisted naming
-- **Screen context**: Event-driven screenshots with OCR
-- **Q&A during meetings**: Ask about what's being discussed right now
-- **Comprehensive summaries**: Discussion points, decisions, action items, open questions
-- **Bilingual**: Works with Chinese, English, and mixed-language meetings
-
-## Quick Start
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) >= 18
-- [Screenpipe](https://screenpi.pe/download) (desktop app or CLI)
-- [Claude Code CLI](https://claude.ai/code)
-- Anthropic API key (for Claude)
-
-### Install
-
-**macOS / Linux:**
-```bash
-git clone https://github.com/TzJ2006/MeetingHelper.git
-cd MeetingHelper
-bash scripts/install.sh
-```
-
-**Windows (PowerShell):**
-```powershell
-git clone https://github.com/TzJ2006/MeetingHelper.git
-cd MeetingHelper
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-```
-
-### Manual Setup
-
-If you prefer to set up manually:
+进入项目目录：
 
 ```bash
-# 1. Install & start Screenpipe
-# Download from https://screenpi.pe/download or:
-brew install screenpipe  # macOS
-screenpipe        # start recording
-
-# 2. Add MCP server to Claude Code
-claude mcp add screenpipe -- npx -y screenpipe-mcp
-
-# 3. Install the meeting summary pipe
-mkdir -p ~/.screenpipe/pipes/meeting-summary-zh
-cp pipes/meeting-summary-zh/pipe.md ~/.screenpipe/pipes/meeting-summary-zh/
-
-# 4. Start Claude Code
-claude
+cd /Users/tongtongtot/Desktop/algorithms/MeetingHelper
 ```
 
-### Usage
+推荐使用本地 Sherpa，同时识别系统声音和麦克风：
 
 ```bash
-# Start Claude Code (with Screenpipe running in background)
-claude
-
-# During a meeting:
-> What's being discussed right now?
-> What did the last speaker say about the deadline?
-> Show me what's on the shared screen
-
-# After a meeting:
-> Generate a summary of my last meeting
-> What action items came out of the meeting?
-> What did we decide about the budget?
-
-# Meeting history:
-> List today's meetings
-> Find when we discussed the new feature last week
+bash scripts/start.sh --source both --asr sherpa
 ```
 
-### Health Check
+首次运行会自动下载中英双语 INT8 模型。依赖、模型、缓存和临时文件全部保存在 MeetingHelper 中；安装完成后识别不需要联网。
 
-**macOS / Linux:**
+停止：
+
 ```bash
-bash scripts/health-check.sh
+bash scripts/stop.sh
 ```
 
-**Windows (PowerShell):**
-```powershell
-powershell -File scripts\health-check.ps1
-```
+## 常用命令
 
-## Platform Setup
-
-### macOS
-
-Grant these permissions to Screenpipe (System Settings > Privacy & Security):
-1. **Screen Recording** — required for screen capture and meeting detection
-2. **Accessibility** — required for meeting detection (UI element scanning)
-3. **Microphone** — required for mic audio capture
-
-System audio is captured via ScreenCaptureKit (macOS 13+) — no virtual audio device needed.
-
-### Windows
-
-1. **Microphone** access (Settings > Privacy > Microphone)
-2. System audio captured via WASAPI Loopback — no extra config needed
-
-## Speaker Management
-
-Screenpipe identifies speakers by voice embeddings. First-time speakers start as "Speaker 0", "Speaker 1", etc.
-
-### Name your speakers
 ```bash
-# In Claude Code:
-> List unnamed speakers
-> Name Speaker 2 as "Alice Chen"
+# 默认：麦克风 + Apple Speech
+bash scripts/start.sh
+
+# 只识别系统声音
+bash scripts/start.sh --source system --asr sherpa
+
+# 只识别麦克风
+bash scripts/start.sh --source mic --asr sherpa
+
+# 同时识别两路声音，显示左右双栏
+bash scripts/start.sh --source both --asr sherpa
+
+# Apple Speech 英文识别
+bash scripts/start.sh --source mic --asr apple --language en-US
+
+# 显示音量并保存调试 WAV
+bash scripts/start.sh --source both --asr sherpa --debug
+
+# 调整窗口
+bash scripts/start.sh --source both --asr sherpa --height 160 --opacity 0.85
 ```
 
-Once named, all past and future transcripts from that voice show the name. The mapping persists across meetings.
+主要参数：
 
-### Calendar-assisted identification
-If your calendar is connected to Screenpipe, meeting attendee names are automatically used to constrain speaker clustering. This improves accuracy — the system knows how many speakers to expect.
+| 参数 | 可用值 | 默认值 |
+| --- | --- | --- |
+| `--source` | `mic`、`system`、`both` | `mic` |
+| `--asr` | `apple`、`sherpa`、`hf` | `apple` |
+| `--language` | 例如 `zh-CN`、`en-US` | `zh-CN` |
+| `--output-dir` | transcript 输出目录 | `transcripts/` |
+| `--height` | 字幕窗口高度 | `120` |
+| `--opacity` | 背景透明度 | `0.75` |
+| `--debug` | 开启音量显示与 WAV 保存 | 关闭 |
 
-### Merge duplicates
-If the same person appears as multiple speaker IDs:
+## 字幕窗口
+
+- `--source both`：左侧显示 speaker/system，右侧显示 microphone
+- `Hide` / `Show`：收起或恢复字幕
+- `Quit`：停止 MeetingHelper
+- 选择文字后按 `Cmd+C`：复制所选字幕
+- 没有选择文字时按 `Cmd+C`：复制当前栏全部字幕
+- 鼠标滚动：查看历史字幕
+
+## 文件位置
+
+所有运行时文件都位于项目目录：
+
+```text
+MeetingHelper/
+├── .build/                  # 编译产物、Python 依赖和缓存
+├── models/                  # 本地 Sherpa 模型
+├── transcripts/             # 字幕文字
+│   ├── YYYY-MM-DD.txt       # microphone
+│   └── YYYY-MM-DD-sys.txt   # speaker/system
+├── debug-audio/             # Debug WAV
+└── logs/
+    ├── subtitle.log
+    ├── subtitle-stop.log
+    └── subtitle.pid
+```
+
+这些运行时目录已加入 `.gitignore`。
+
+## 转录音频文件
+
+使用 Apple Speech 手动转录 WAV 或其他受 AVFoundation 支持的音频文件：
+
 ```bash
-> Merge Speaker 3 into Speaker 1 (they're the same person)
+bash scripts/transcribe.sh "debug-audio/example.wav" --language en-US
 ```
 
-## Q&A Logging
+把结果写入文件：
 
-Every meeting Q&A session is automatically logged to `~/.meeting-helper/qa-log/YYYY-MM-DD.md`. This creates a searchable history of what you asked about each meeting and what you learned.
-
-## Mixed-Language Retranscription
-
-If Chinese-English mixed transcription quality is poor for specific segments, you can retranscribe after the meeting:
 ```bash
-# In Claude Code:
-> The transcript from 2:00-2:30 PM seems garbled, can you retranscribe it?
+bash scripts/transcribe.sh "debug-audio/example.wav" \
+  --language en-US \
+  --output "transcripts/example.txt"
 ```
 
-Claude will use the retranscription API with bilingual hints to improve accuracy.
+这个命令在文件处理结束后会自动退出，不会持续运行。
 
-## Known Limitations
+## ASR 选择
 
-- **Mixed-language transcription**: Whisper detects language per ~30-second chunk, not per sentence. Mid-sentence code-switching (e.g., "Let's discuss the 技术方案") may produce errors in that chunk
-- **Speaker identification**: Remote meeting participants sharing one audio channel may not be individually identified. Local microphone speaker is reliably identified
-- **Long meetings**: Summaries for meetings > 1 hour use chunked processing (30-min segments)
+| 模式 | 适用情况 | 说明 |
+| --- | --- | --- |
+| `sherpa` | 双音源、离线会议字幕 | 推荐；真正流式，中英双语，安装后完全本地 |
+| `apple` | 单音源、手动文件转录 | 系统原生；可能使用 Apple 在线语音服务 |
+| `hf` | 自行选择 Hugging Face 模型 | 实验模式；依赖和模型需要自行管理 |
 
-## Project Structure
+## 本地 LLM
 
-```
-meeting-helper/
-├── CLAUDE.md                           # Claude Code instructions for meeting Q&A
-├── README.md                           # This file
-├── config/
-│   └── screenpipe-settings.json        # Recommended Screenpipe settings
-├── pipes/
-│   └── meeting-summary-zh/
-│       └── pipe.md                     # Custom meeting summary pipe (中英)
-├── scripts/
-│   ├── install.sh                      # macOS/Linux installer
-│   ├── install.ps1                     # Windows installer
-│   ├── setup-mcp.sh                    # MCP configuration for Claude Code
-│   ├── health-check.sh                 # Verify all components (macOS/Linux)
-│   └── health-check.ps1                # Verify all components (Windows)
-├── docs/
-│   └── ecl/
-│       └── meeting-helper.yaml         # Planning document (ECL)
-├── screenpipe/                         # Screenpipe source (reference, gitignored)
-└── meetily/                            # Meetily source (reference, gitignored)
+`scripts/local_llm.py` 可以把 transcript 发送到兼容 OpenAI API 的本地服务，例如 Ollama：
+
+```bash
+python3 scripts/local_llm.py \
+  transcripts/2026-07-10.txt \
+  "请总结会议结论和待办事项"
 ```
 
-## Privacy
+默认连接 `http://localhost:11434/v1`，默认模型为 `llama3.1`。可以通过 `LOCAL_LLM_BASE_URL`、`LOCAL_LLM_MODEL` 和 `LOCAL_LLM_API_KEY` 修改。
 
-- All audio and screen data is stored locally on your machine (in `~/.screenpipe/`)
-- Meeting transcripts are processed locally via Whisper
-- When using Claude for summaries/Q&A, transcript data is sent to Anthropic's API
-- For sensitive meetings, consider using a local LLM (Ollama) instead
-- Check your jurisdiction's recording consent laws before use
-- Many corporate environments prohibit meeting recording — verify your company's policy
+## 完整教程
 
-## License
-
-MIT
+权限设置、英文识别、Debug 音频和故障排查见 [tutorial.md](tutorial.md)。

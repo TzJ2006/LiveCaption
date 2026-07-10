@@ -1,0 +1,9 @@
+[mcp_servers.screenpipe]
+command = "npx"
+args = [
+    "-y",
+    "screenpipe-mcp",
+]
+
+[mcp_servers.screenpipe.env]
+SCREENPIPE_LOCAL_API_KEY = "sp-06ef54af"
