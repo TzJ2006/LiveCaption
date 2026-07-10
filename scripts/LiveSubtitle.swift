@@ -63,8 +63,8 @@ func parseArgs() -> Config {
     let projectDir = scriptDir.deletingLastPathComponent()
     var config = Config(
         outputDir: projectDir.appendingPathComponent("transcripts").path,
-        hfScript: scriptDir.appendingPathComponent("hf_asr.py").path,
-        sherpaScript: scriptDir.appendingPathComponent("sherpa_asr.py").path,
+        hfScript: scriptDir.appendingPathComponent("hf_asr_worker.py").path,
+        sherpaScript: scriptDir.appendingPathComponent("sherpa_asr_worker.py").path,
         stopScript: projectDir.appendingPathComponent("scripts/stop.sh").path,
         debugDir: projectDir.appendingPathComponent("debug-audio").path
     )
@@ -922,8 +922,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         case .apple:
             var sources = config.sourceMode.sources
             if sources.count > 1 {
-                // The Speech service serves one live recognition task per
-                // process; run the system source in a worker subprocess.
+                // Apple Speech allows one live task per process, so system audio
+                // uses a worker when both sources are enabled.
                 let executable = URL(fileURLWithPath: CommandLine.arguments[0]).path
                 workerASR = try SubprocessASR(
                     command: [executable, "--speech-worker", "--language", config.language],
@@ -1117,9 +1117,7 @@ func pcmBuffer(sampleRate: Double, floats: [Float]) -> AVAudioPCMBuffer? {
     return buffer
 }
 
-// Headless mode: the Speech service only serves one live recognition task per
-// process, so `--source both` runs the system source in this worker subprocess.
-// Protocol matches the Python workers: NDJSON audio frames in, NDJSON text out.
+// Headless Apple Speech worker. Uses the same NDJSON protocol as Python workers.
 func runSpeechWorker(config: Config) -> Never {
     var asrs: [Source: AppleASR] = [:]
     var stdinBuffer = ""

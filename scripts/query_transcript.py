@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal local OpenAI-compatible LLM client for transcript files."""
+"""Query a transcript through a local OpenAI-compatible API."""
 
 import argparse
 import json

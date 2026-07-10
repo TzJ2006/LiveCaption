@@ -138,10 +138,10 @@ bash scripts/transcribe.sh "debug-audio/example.wav" \
 
 ## 本地 LLM
 
-`scripts/local_llm.py` 可以把 transcript 发送到兼容 OpenAI API 的本地服务，例如 Ollama：
+`scripts/query_transcript.py` 可以把 transcript 发送到兼容 OpenAI API 的本地服务，例如 Ollama：
 
 ```bash
-python3 scripts/local_llm.py \
+python3 scripts/query_transcript.py \
   transcripts/2026-07-10.txt \
   "请总结会议结论和待办事项"
 ```

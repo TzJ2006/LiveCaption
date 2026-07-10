@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Transcribe audio files with the local Sherpa-ONNX model."""
+
 import argparse
 import pathlib
 import sys

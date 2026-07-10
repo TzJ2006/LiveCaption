@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Small Hugging Face ASR worker.
+"""Hugging Face ASR worker using NDJSON over standard input and output.
 
-Reads NDJSON audio frames on stdin and writes transcript events on stdout.
-Each input line:
+Input:
   {"type":"audio","source":"mic","sampleRate":16000,"pcmFloat32":"..."}
-Each output line:
+Output:
   {"source":"mic","text":"hello","final":true}
 """
 

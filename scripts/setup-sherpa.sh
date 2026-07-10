@@ -35,5 +35,5 @@ if [[ ! -s "$MODEL_DIR/encoder.int8.onnx" || \
     rm -f "$ARCHIVE"
 fi
 
-python3 "$SCRIPT_DIR/sherpa_asr.py" </dev/null
+python3 "$SCRIPT_DIR/sherpa_asr_worker.py" </dev/null
 echo "Sherpa ready: $MODEL_DIR"
