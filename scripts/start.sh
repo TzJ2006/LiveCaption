@@ -73,8 +73,8 @@ ARGS=(
     --output-dir "$OUTPUT_DIR"
     --opacity "$OPACITY"
     --height "$HEIGHT"
-    --hf-script "$SCRIPT_DIR/hf_asr.py"
-    --sherpa-script "$SCRIPT_DIR/sherpa_asr.py"
+    --hf-script "$SCRIPT_DIR/hf_asr_worker.py"
+    --sherpa-script "$SCRIPT_DIR/sherpa_asr_worker.py"
 )
 if [[ "$ASR" == "hf" ]]; then
     ARGS+=(--hf-model "$HF_MODEL")

@@ -9,11 +9,11 @@ MeetingHelper is now a minimal macOS live subtitle tool.
   - Captures current system output with `ScreenCaptureKit`
   - Uses Apple Speech for default ASR
   - Owns floating subtitle UI and transcript file writes
-- Optional Python HF worker: `scripts/hf_asr.py`
+- Optional Python HF worker: `scripts/hf_asr_worker.py`
   - Used only with `--asr hf`
   - Receives NDJSON audio frames from Swift
   - Returns NDJSON transcript events
-- Optional Python LLM helper: `scripts/local_llm.py`
+- Optional Python LLM helper: `scripts/query_transcript.py`
   - Reads transcript files
   - Calls an OpenAI-compatible local API
 

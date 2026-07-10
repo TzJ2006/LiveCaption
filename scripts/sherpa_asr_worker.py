@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Sherpa-ONNX ASR worker using NDJSON over standard input and output."""
+
 import argparse
 import base64
 import json
