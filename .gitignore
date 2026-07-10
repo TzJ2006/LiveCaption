@@ -37,4 +37,5 @@ models/
 .claude/
 docs/debug/
 
-
+archive/
+.codex/
