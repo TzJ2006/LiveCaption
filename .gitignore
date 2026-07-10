@@ -17,6 +17,7 @@ node_modules/
 
 # Logs
 *.log
+logs/
 
 # Editor
 .vscode/
@@ -24,5 +25,14 @@ node_modules/
 *.swp
 *~
 
+# Transcripts (local meeting data)
+transcripts/
+debug-audio/
+models/
+
+# Build output
+.build/
+
 # Claude Code local settings
 .claude/
+docs/debug/

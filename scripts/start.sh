@@ -1,116 +1,99 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Meeting Helper — 一键启动
-# 用法: bash scripts/start.sh [--model MODEL] [--source mic|system|both] [--system-device NAME]
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$HOME/.meeting-helper"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+BUILD_DIR="$PROJECT_DIR/.build"
+BIN="$BUILD_DIR/live-subtitle"
+LOG_DIR="$PROJECT_DIR/logs"
+PID_FILE="$LOG_DIR/subtitle.pid"
 
-# ── 参数解析 ────────────────────────────────────────────────────────────────
-MODEL="${MODEL:-zipformer}"
 SOURCE="${SOURCE:-mic}"
-SYSTEM_DEVICE="${SYSTEM_DEVICE:-}"
-SUBTITLE_OPACITY="${SUBTITLE_OPACITY:-0.75}"
-SUBTITLE_HEIGHT="${SUBTITLE_HEIGHT:-120}"
-OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.meeting-helper/transcripts}"
+ASR="${ASR:-apple}"
+LANGUAGE="${LANGUAGE:-zh-CN}"
+HF_MODEL="${HF_MODEL:-}"
+OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/transcripts}"
+OPACITY="${SUBTITLE_OPACITY:-0.75}"
+HEIGHT="${SUBTITLE_HEIGHT:-120}"
+DEBUG="${DEBUG:-0}"
 
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --model) MODEL="$2"; shift 2 ;;
+    case "$1" in
         --source) SOURCE="$2"; shift 2 ;;
-        --system-device) SYSTEM_DEVICE="$2"; shift 2 ;;
-        --opacity) SUBTITLE_OPACITY="$2"; shift 2 ;;
-        --height) SUBTITLE_HEIGHT="$2"; shift 2 ;;
+        --asr) ASR="$2"; shift 2 ;;
+        --language) LANGUAGE="$2"; shift 2 ;;
+        --hf-model) HF_MODEL="$2"; shift 2 ;;
+        --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+        --opacity) OPACITY="$2"; shift 2 ;;
+        --height) HEIGHT="$2"; shift 2 ;;
+        --debug) DEBUG="1"; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; }
-
-# ── 0. 创建必要目录 ─────────────────────────────────────────────────────────
-mkdir -p "$LOG_DIR" "$OUTPUT_DIR"
-
-# ── 1. 检查参数有效性 ──────────────────────────────────────────────────────
-case "$MODEL" in
-    zipformer|paraformer|qwen3-asr|whisper|moonshine|voxtral)
-        info "模型: $MODEL"
-        ;;
-    *)
-        error "未知模型: $MODEL"
-        echo "  可用: zipformer (默认), paraformer, qwen3-asr, whisper, moonshine, voxtral"
-        exit 1
-        ;;
-esac
-
 case "$SOURCE" in
-    mic|system|both)
-        info "音频源: $SOURCE"
-        ;;
-    *)
-        error "未知音频源: $SOURCE"
-        echo "  可用: mic (默认), system, both"
-        exit 1
-        ;;
+    mic|system|both) ;;
+    *) echo "Use --source mic|system|both"; exit 1 ;;
 esac
 
-# ── 2. 检查是否已在运行 ────────────────────────────────────────────────────
-PID_FILE="$LOG_DIR/subtitle.pid"
-if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE")
+case "$ASR" in
+    apple|hf|sherpa) ;;
+    *) echo "Use --asr apple|hf|sherpa"; exit 1 ;;
+esac
+
+if [[ "$ASR" == "hf" && -z "$HF_MODEL" ]]; then
+    echo "--asr hf requires --hf-model <huggingface/model-id>"
+    exit 1
+fi
+
+if [[ "$ASR" == "sherpa" ]]; then
+    bash "$SCRIPT_DIR/setup-sherpa.sh"
+fi
+
+mkdir -p "$BUILD_DIR/module-cache" "$LOG_DIR" "$OUTPUT_DIR"
+
+if [[ -f "$PID_FILE" ]]; then
+    OLD_PID="$(cat "$PID_FILE")"
     if kill -0 "$OLD_PID" 2>/dev/null; then
-        info "字幕窗口已在运行 (PID: $OLD_PID)"
+        echo "Subtitle window already running (PID: $OLD_PID)"
         exit 0
     fi
     rm -f "$PID_FILE"
 fi
 
-# ── 3. 启动字幕窗口 ─────────────────────────────────────────────────────────
-info "启动字幕窗口..."
-SUBTITLE_ARGS=(
-    --model "$MODEL"
-    --source "$SOURCE"
-    --output-dir "$OUTPUT_DIR"
-    --opacity "$SUBTITLE_OPACITY"
-    --height "$SUBTITLE_HEIGHT"
-)
-if [[ -n "$SYSTEM_DEVICE" ]]; then
-    SUBTITLE_ARGS+=(--system-device "$SYSTEM_DEVICE")
-fi
-PYTHONUNBUFFERED=1 nohup python3 "$SCRIPT_DIR/live-subtitle.py" \
-    "${SUBTITLE_ARGS[@]}" \
-    > "$LOG_DIR/subtitle.log" 2>&1 &
-SUBTITLE_PID=$!
-echo "$SUBTITLE_PID" > "$PID_FILE"
-info "字幕窗口已启动 (PID: $SUBTITLE_PID)"
+xcrun swiftc \
+    -module-cache-path "$BUILD_DIR/module-cache" \
+    "$SCRIPT_DIR/LiveSubtitle.swift" \
+    -o "$BIN"
 
-# ── 4. 完成 ────────────────────────────────────────────────────────────────
-echo ""
-info "Meeting Helper 已就绪!"
-echo ""
-echo "  模型: $MODEL"
-echo "  音频源: $SOURCE"
-if [[ -n "$SYSTEM_DEVICE" ]]; then
-    echo "  系统音频设备: $SYSTEM_DEVICE"
+ARGS=(
+    --source "$SOURCE"
+    --asr "$ASR"
+    --language "$LANGUAGE"
+    --output-dir "$OUTPUT_DIR"
+    --opacity "$OPACITY"
+    --height "$HEIGHT"
+    --hf-script "$SCRIPT_DIR/hf_asr.py"
+    --sherpa-script "$SCRIPT_DIR/sherpa_asr.py"
+)
+if [[ "$ASR" == "hf" ]]; then
+    ARGS+=(--hf-model "$HF_MODEL")
 fi
-echo ""
-echo "  字幕控制:"
-echo "    Cmd+Shift+S  显示/隐藏字幕窗口"
-echo ""
-echo "  字幕文件:"
-echo "    $OUTPUT_DIR/"
-echo ""
-echo "  示例:"
-echo "    bash $SCRIPT_DIR/start.sh --source both"
-echo "    bash $SCRIPT_DIR/start.sh --model paraformer --source system"
-echo ""
-echo "  停止服务:"
-echo "    bash $SCRIPT_DIR/stop.sh"
-echo ""
+if [[ "$DEBUG" == "1" ]]; then
+    ARGS+=(--debug)
+fi
+
+nohup "$BIN" "${ARGS[@]}" > "$LOG_DIR/subtitle.log" 2>&1 &
+PID=$!
+echo "$PID" > "$PID_FILE"
+
+echo "Subtitle window started (PID: $PID)"
+echo "Source: $SOURCE"
+echo "ASR: $ASR"
+echo "Language: $LANGUAGE"
+echo "Transcripts: $OUTPUT_DIR"
+if [[ "$DEBUG" == "1" ]]; then
+    echo "Debug audio: $PROJECT_DIR/debug-audio"
+fi
+echo "Log: $LOG_DIR/subtitle.log"
+echo "Stop: bash $SCRIPT_DIR/stop.sh"
