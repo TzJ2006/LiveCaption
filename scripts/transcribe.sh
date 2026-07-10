@@ -8,7 +8,7 @@ BIN="$PROJECT_DIR/.build/transcribe-audio"
 mkdir -p "$PROJECT_DIR/.build/module-cache"
 xcrun swiftc \
     -module-cache-path "$PROJECT_DIR/.build/module-cache" \
-    "$SCRIPT_DIR/TranscribeAudio.swift" \
+    "$PROJECT_DIR/src/swift/TranscribeAudio.swift" \
     -o "$BIN"
 
 "$BIN" "$@"
