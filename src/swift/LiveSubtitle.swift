@@ -63,8 +63,8 @@ func parseArgs() -> Config {
     let projectDir = scriptDir.deletingLastPathComponent()
     var config = Config(
         outputDir: projectDir.appendingPathComponent("transcripts").path,
-        hfScript: scriptDir.appendingPathComponent("hf_asr_worker.py").path,
-        sherpaScript: scriptDir.appendingPathComponent("sherpa_asr_worker.py").path,
+        hfScript: projectDir.appendingPathComponent("src/python/hf_asr_worker.py").path,
+        sherpaScript: projectDir.appendingPathComponent("src/python/sherpa_asr_worker.py").path,
         stopScript: projectDir.appendingPathComponent("scripts/stop.sh").path,
         debugDir: projectDir.appendingPathComponent("debug-audio").path
     )

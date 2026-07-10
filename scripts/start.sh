@@ -63,7 +63,7 @@ fi
 
 xcrun swiftc \
     -module-cache-path "$BUILD_DIR/module-cache" \
-    "$SCRIPT_DIR/LiveSubtitle.swift" \
+    "$PROJECT_DIR/src/swift/LiveSubtitle.swift" \
     -o "$BIN"
 
 ARGS=(
@@ -73,8 +73,8 @@ ARGS=(
     --output-dir "$OUTPUT_DIR"
     --opacity "$OPACITY"
     --height "$HEIGHT"
-    --hf-script "$SCRIPT_DIR/hf_asr_worker.py"
-    --sherpa-script "$SCRIPT_DIR/sherpa_asr_worker.py"
+    --hf-script "$PROJECT_DIR/src/python/hf_asr_worker.py"
+    --sherpa-script "$PROJECT_DIR/src/python/sherpa_asr_worker.py"
 )
 if [[ "$ASR" == "hf" ]]; then
     ARGS+=(--hf-model "$HF_MODEL")

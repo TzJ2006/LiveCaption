@@ -96,6 +96,10 @@ bash scripts/start.sh --source both --asr sherpa --height 160 --opacity 0.85
 
 ```text
 MeetingHelper/
+├── scripts/                 # 启动、停止和安装脚本
+├── src/
+│   ├── swift/               # macOS 主程序和 Apple Speech 工具
+│   └── python/              # ASR worker 和 transcript 工具
 ├── .build/                  # 编译产物、Python 依赖和缓存
 ├── models/                  # 本地 Sherpa 模型
 ├── transcripts/             # 字幕文字
@@ -138,10 +142,10 @@ bash scripts/transcribe.sh "debug-audio/example.wav" \
 
 ## 本地 LLM
 
-`scripts/query_transcript.py` 可以把 transcript 发送到兼容 OpenAI API 的本地服务，例如 Ollama：
+`src/python/query_transcript.py` 可以把 transcript 发送到兼容 OpenAI API 的本地服务，例如 Ollama：
 
 ```bash
-python3 scripts/query_transcript.py \
+python3 src/python/query_transcript.py \
   transcripts/2026-07-10.txt \
   "请总结会议结论和待办事项"
 ```
