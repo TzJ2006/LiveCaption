@@ -1,6 +1,6 @@
 # AGENTS.md
 
-MeetingHelper is now a minimal macOS live subtitle tool.
+LiveCaption is a lightweight multi-backend speech-to-text framework for macOS (live captions + transcripts). Meetings are a highlighted use case, not the product boundary.
 
 ## Current Architecture
 

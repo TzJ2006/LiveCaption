@@ -17,14 +17,14 @@ export PYTHONPYCACHEPREFIX="$BUILD_DIR/pycache"
 export TMPDIR="$BUILD_DIR/tmp"
 
 if ! PYTHONPATH="$PYDEPS" python3 -c 'import numpy, sherpa_onnx' 2>/dev/null; then
-    echo "Installing Sherpa dependencies inside MeetingHelper..."
+    echo "Installing Sherpa dependencies inside LiveCaption..."
     python3 -m pip install --upgrade --target "$PYDEPS" numpy sherpa-onnx
 fi
 
 if [[ ! -s "$MODEL_DIR/encoder.int8.onnx" || \
       ! -s "$MODEL_DIR/decoder.int8.onnx" || \
       ! -s "$MODEL_DIR/tokens.txt" ]]; then
-    echo "Downloading bilingual Sherpa model inside MeetingHelper..."
+    echo "Downloading bilingual Sherpa model inside LiveCaption..."
     curl --fail --location --retry 3 --continue-at - \
         --progress-bar --output "$ARCHIVE.part" "$MODEL_URL"
     mv "$ARCHIVE.part" "$ARCHIVE"

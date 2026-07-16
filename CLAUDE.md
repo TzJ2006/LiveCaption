@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-MeetingHelper is a minimal macOS live subtitle tool: it captures microphone and/or system audio, shows real-time subtitles in a floating window, and writes transcripts to `transcripts/`. See `AGENTS.md` for the same constraints in short form.
+LiveCaption is a lightweight multi-backend speech-to-text framework for macOS: it captures microphone and/or system audio, routes audio through a chosen ASR backend (Apple / Sherpa / HF), shows real-time subtitles in a floating window, and writes transcripts to `transcripts/`. Meetings are a common use case. See `AGENTS.md` for the same constraints in short form.
 
 ## Commands
 

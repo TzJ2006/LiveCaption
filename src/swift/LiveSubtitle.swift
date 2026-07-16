@@ -192,7 +192,7 @@ final class TranscriptWriter {
 final class DebugRecorder {
     private let outputDir: URL
     private let runID = DebugRecorder.dateFormatter.string(from: Date())
-    private let queue = DispatchQueue(label: "meetinghelper.debug-audio")
+    private let queue = DispatchQueue(label: "LiveCaption.debug-audio")
     private var handles: [Source: FileHandle] = [:]
     private var sampleRates: [Source: Double] = [:]
     private var dataSizes: [Source: UInt32] = [:]
@@ -507,7 +507,7 @@ final class SubtitleWindow {
 
     @objc private func quitClicked() {
         sources.forEach {
-            replaceLine("Stopping MeetingHelper... result: logs/subtitle-stop.log\n", color: NSColor.systemOrange, source: $0)
+            replaceLine("Stopping LiveCaption... result: logs/subtitle-stop.log\n", color: NSColor.systemOrange, source: $0)
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -573,7 +573,7 @@ final class AppleASR {
         self.onText = onText
         let locale = Locale(identifier: language)
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
-            throw NSError(domain: "MeetingHelper", code: 1, userInfo: [NSLocalizedDescriptionKey: "Apple Speech unavailable for \(language)"])
+            throw NSError(domain: "LiveCaption", code: 1, userInfo: [NSLocalizedDescriptionKey: "Apple Speech unavailable for \(language)"])
         }
         self.recognizer = recognizer
         startSession()
@@ -767,7 +767,7 @@ final class MicCapture {
 
 final class SystemCapture: NSObject, SCStreamOutput {
     private var stream: SCStream?
-    private let queue = DispatchQueue(label: "meetinghelper.system-audio")
+    private let queue = DispatchQueue(label: "LiveCaption.system-audio")
     private let onSampleBuffer: (Source, CMSampleBuffer) -> Void
     private let onFloats: ((Source, Double, [Float]) -> Void)?
 
@@ -901,7 +901,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         } catch {
             fputs("\(error.localizedDescription)\n", stderr)
             showPermissionAlert(
-                title: "MeetingHelper could not start",
+                title: "LiveCaption could not start",
                 message: error.localizedDescription,
                 settingsURL: nil
             )
@@ -914,7 +914,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard speechOK else {
                 self.showPermissionAlert(
                     title: "Speech Recognition permission needed",
-                    message: "Enable Speech Recognition for live-subtitle, then start MeetingHelper again.",
+                    message: "Enable Speech Recognition for live-subtitle, then start LiveCaption again.",
                     settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
                 )
                 return
@@ -923,7 +923,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 guard micOK else {
                     self.showPermissionAlert(
                         title: "Microphone permission needed",
-                        message: "Enable Microphone access for live-subtitle, then start MeetingHelper again.",
+                        message: "Enable Microphone access for live-subtitle, then start LiveCaption again.",
                         settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
                     )
                     return
@@ -1213,5 +1213,5 @@ app.setActivationPolicy(.accessory)
 let delegate = AppController(config: config)
 app.delegate = delegate
 installTerminationHandlers()
-print("MeetingHelper subtitles running: source=\(config.sourceMode.rawValue), asr=\(config.asrMode.rawValue), output=\(config.outputDir)")
+print("LiveCaption subtitles running: source=\(config.sourceMode.rawValue), asr=\(config.asrMode.rawValue), output=\(config.outputDir)")
 app.run()
