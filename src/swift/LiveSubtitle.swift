@@ -9,6 +9,7 @@ import Speech
 enum Source: String, CaseIterable {
     case mic
     case sys
+    case mixed
 }
 
 enum SourceMode: String {
@@ -44,7 +45,11 @@ struct Config {
     var stopScript: String
     var debug = false
     var debugDir: String
-    var speechWorker = false
+
+    var displaySources: [Source] {
+        if asrMode == .apple && sourceMode == .both { return [.mixed] }
+        return sourceMode == .both ? [.sys, .mic] : sourceMode.sources
+    }
 }
 
 func localeID(_ language: String) -> String {
@@ -110,8 +115,6 @@ func parseArgs() -> Config {
             config.sherpaScript = value()
         case "--debug":
             config.debug = true
-        case "--speech-worker":
-            config.speechWorker = true
         case "--help", "-h":
             print("""
             Usage:
@@ -334,7 +337,7 @@ final class SubtitleWindow {
 
     init(config: Config) {
         stopScript = config.stopScript
-        sources = config.sourceMode == .both ? [.sys, .mic] : config.sourceMode.sources
+        sources = config.displaySources
         let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         let rect = NSRect(x: screen.minX + 50, y: screen.minY, width: screen.width - 100, height: config.height)
         expandedFrame = rect
@@ -413,7 +416,11 @@ final class SubtitleWindow {
     }
 
     private func prefix(_ source: Source) -> String {
-        source == .mic ? "(microphone) " : "(speaker) "
+        switch source {
+        case .mic: return "(microphone) "
+        case .sys: return "(speaker) "
+        case .mixed: return "(meeting) "
+        }
     }
 
     private func formatLevel(_ level: Float?) -> String {
@@ -551,6 +558,7 @@ final class SubtitleWindow {
 }
 
 final class AppleASR {
+    private static let sessionDuration: TimeInterval = 50
     private let source: Source
     private let recognizer: SFSpeechRecognizer
     private let onText: (Source, String, Bool) -> Void
@@ -597,6 +605,9 @@ final class AppleASR {
             self?.handle(sessionID: currentSessionID, result: result, error: error)
         }
         lock.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.sessionDuration) { [weak self] in
+            self?.restart(sessionID: currentSessionID, commitPartial: true)
+        }
     }
 
     private func handle(sessionID: Int, result: SFSpeechRecognitionResult?, error: Error?) {
@@ -606,35 +617,54 @@ final class AppleASR {
         guard isCurrentSession else { return }
 
         if let error {
-            fputs("Apple Speech error (\(source.rawValue)): \(error.localizedDescription)\n", stderr)
-            restart(sessionID: sessionID)
+            let nsError = error as NSError
+            fputs("Apple Speech error (\(source.rawValue), \(nsError.domain) \(nsError.code)): \(error.localizedDescription)\n", stderr)
+            restart(sessionID: sessionID, commitPartial: true, delay: 0.5)
             return
         }
         guard let result else { return }
         let text = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty && (result.isFinal || text != lastText) {
-            onText(source, text, result.isFinal)
+        lock.lock()
+        guard sessionID == self.sessionID else {
+            lock.unlock()
+            return
+        }
+        let shouldEmit = !text.isEmpty && (result.isFinal || text != lastText)
+        if shouldEmit {
             lastText = text
         }
+        lock.unlock()
+        if shouldEmit {
+            onText(source, text, result.isFinal)
+        }
         if result.isFinal {
-            restart(sessionID: sessionID)
+            restart(sessionID: sessionID, commitPartial: false)
         }
     }
 
-    private func restart(sessionID: Int) {
+    private func restart(sessionID: Int, commitPartial: Bool, delay: TimeInterval = 0) {
         lock.lock()
         guard sessionID == self.sessionID else {
             lock.unlock()
             return
         }
         self.sessionID += 1
+        let partial = commitPartial ? lastText : ""
         task?.cancel()
         request?.endAudio()
         task = nil
         request = nil
         lock.unlock()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.startSession()
+        if !partial.isEmpty {
+            onText(source, partial, true)
+        }
+        fputs("Apple Speech session rotated (\(source.rawValue))\n", stderr)
+        if delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.startSession()
+            }
+        } else {
+            startSession()
         }
     }
 }
@@ -793,6 +823,46 @@ final class SystemCapture: NSObject, SCStreamOutput {
     }
 }
 
+final class MixedAudioGate {
+    private let targetRate = 16_000.0
+    private let systemVoiceThreshold: Float = -45
+    private let systemHangover: TimeInterval = 0.6
+    private let lock = NSLock()
+    private var lastSystemVoice = Date.distantPast
+    private var resamplePositions: [Source: Double] = [:]
+
+    func process(source: Source, sampleRate: Double, floats: [Float]) -> [Float]? {
+        guard !floats.isEmpty, sampleRate > 0 else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+
+        let now = Date()
+        if source == .sys && rmsDB(floats) >= systemVoiceThreshold {
+            lastSystemVoice = now
+        }
+        let selected: Source = now.timeIntervalSince(lastSystemVoice) <= systemHangover ? .sys : .mic
+        guard source == selected else { return nil }
+        return resample(source: source, sampleRate: sampleRate, floats: floats)
+    }
+
+    private func resample(source: Source, sampleRate: Double, floats: [Float]) -> [Float] {
+        guard abs(sampleRate - targetRate) > 1 else { return floats }
+        let step = sampleRate / targetRate
+        var position = resamplePositions[source] ?? 0
+        var output: [Float] = []
+        output.reserveCapacity(Int(Double(floats.count) / step) + 1)
+        while position < Double(floats.count) {
+            let lower = Int(position)
+            let upper = min(lower + 1, floats.count - 1)
+            let fraction = Float(position - Double(lower))
+            output.append(floats[lower] + (floats[upper] - floats[lower]) * fraction)
+            position += step
+        }
+        resamplePositions[source] = position - Double(floats.count)
+        return output
+    }
+}
+
 final class AppController: NSObject, NSApplicationDelegate {
     private let config: Config
     private let writer: TranscriptWriter
@@ -800,7 +870,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var subtitle: SubtitleWindow?
     private var appleASR: [Source: AppleASR] = [:]
     private var pythonASR: SubprocessASR?
-    private var workerASR: SubprocessASR?
+    private let mixedAudioGate = MixedAudioGate()
     private var micCapture: MicCapture?
     private var systemCapture: SystemCapture?
     private var debugLevels: [Source: Float] = [:]
@@ -816,9 +886,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         subtitle = SubtitleWindow(config: config)
         if config.debug {
-            subtitle?.showDebug(levels: debugLevels, sources: config.sourceMode.sources)
+            subtitle?.showDebug(levels: debugLevels, sources: config.displaySources)
         } else {
-            config.sourceMode.sources.forEach { subtitle?.setStatus("Listening...\n", source: $0) }
+            config.displaySources.forEach { subtitle?.setStatus("Listening...\n", source: $0) }
         }
         NSApp.activate(ignoringOtherApps: true)
         requestPermissionsThenStart()
@@ -903,7 +973,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func showPermissionAlert(title: String, message: String, settingsURL: String?) {
         DispatchQueue.main.async {
-            if let source = self.config.sourceMode.sources.first {
+            if let source = self.config.displaySources.first {
                 self.subtitle?.setStatus("\(title)\n", source: source)
             }
             NSApp.activate(ignoringOtherApps: true)
@@ -925,18 +995,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func setupASR() throws {
         switch config.asrMode {
         case .apple:
-            var sources = config.sourceMode.sources
-            if sources.count > 1 {
-                // Apple Speech allows one live task per process, so system audio
-                // uses a worker when both sources are enabled.
-                let executable = URL(fileURLWithPath: CommandLine.arguments[0]).path
-                workerASR = try SubprocessASR(
-                    command: [executable, "--speech-worker", "--language", config.language],
-                    onText: handleText
-                )
-                sources.removeAll { $0 == .sys }
-            }
-            for source in sources {
+            for source in config.displaySources {
                 appleASR[source] = try AppleASR(source: source, language: config.language, onText: handleText)
             }
         case .hf:
@@ -947,7 +1006,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func startAudio() throws {
-        let needsFloats = config.asrMode != .apple || config.debug || workerASR != nil
+        let needsFloats = config.asrMode != .apple || config.debug || config.sourceMode == .both
         let onFloats: ((Source, Double, [Float]) -> Void)? = needsFloats ? { [weak self] source, rate, floats in
             self?.handleFloats(source: source, sampleRate: rate, floats: floats)
         } : nil
@@ -969,20 +1028,28 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func handleFloats(source: Source, sampleRate: Double, floats: [Float]) {
+        var mixedLevel: Float?
         if config.asrMode != .apple {
             pythonASR?.send(source: source, sampleRate: sampleRate, floats: floats)
-        } else if source == .sys {
-            workerASR?.send(source: source, sampleRate: sampleRate, floats: floats)
+        } else if config.sourceMode == .both,
+                  let selected = mixedAudioGate.process(source: source, sampleRate: sampleRate, floats: floats),
+                  let buffer = pcmBuffer(sampleRate: 16_000, floats: selected) {
+            appleASR[.mixed]?.append(buffer)
+            mixedLevel = rmsDB(selected)
         }
 
         guard let debugRecorder else { return }
         let level = debugRecorder.record(source: source, sampleRate: sampleRate, floats: floats)
         DispatchQueue.main.async {
-            self.debugLevels[source] = level
+            if let mixedLevel {
+                self.debugLevels[.mixed] = mixedLevel
+            } else if self.config.displaySources != [.mixed] {
+                self.debugLevels[source] = level
+            }
             let now = Date()
             guard now.timeIntervalSince(self.lastDebugDraw) >= 0.15 else { return }
             self.lastDebugDraw = now
-            self.subtitle?.showDebug(levels: self.debugLevels, sources: self.config.sourceMode.sources)
+            self.subtitle?.showDebug(levels: self.debugLevels, sources: self.config.displaySources)
         }
     }
 
@@ -1127,56 +1194,6 @@ func pcmBuffer(sampleRate: Double, floats: [Float]) -> AVAudioPCMBuffer? {
     return buffer
 }
 
-// Headless Apple Speech worker. Uses the same NDJSON protocol as Python workers.
-func runSpeechWorker(config: Config) -> Never {
-    var asrs: [Source: AppleASR] = [:]
-    var stdinBuffer = ""
-
-    func emit(source: Source, text: String, final: Bool) {
-        let payload: [String: Any] = ["source": source.rawValue, "text": text, "final": final]
-        guard
-            let json = try? JSONSerialization.data(withJSONObject: payload),
-            let line = String(data: json, encoding: .utf8)
-        else { return }
-        FileHandle.standardOutput.write(Data((line + "\n").utf8))
-    }
-
-    FileHandle.standardInput.readabilityHandler = { handle in
-        let data = handle.availableData
-        if data.isEmpty { exit(0) }
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        stdinBuffer.append(text)
-        let parts = stdinBuffer.split(separator: "\n", omittingEmptySubsequences: false)
-        stdinBuffer = parts.last.map(String.init) ?? ""
-        for line in parts.dropLast() {
-            if line.isEmpty { continue }
-            guard
-                let jsonData = line.data(using: .utf8),
-                let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                let sourceRaw = obj["source"] as? String,
-                let source = Source(rawValue: sourceRaw),
-                let sampleRate = (obj["sampleRate"] as? NSNumber)?.doubleValue,
-                let base64 = obj["pcmFloat32"] as? String,
-                let pcm = Data(base64Encoded: base64)
-            else { continue }
-            if asrs[source] == nil {
-                do {
-                    asrs[source] = try AppleASR(source: source, language: config.language, onText: emit)
-                } catch {
-                    fputs("Speech worker could not start ASR: \(error.localizedDescription)\n", stderr)
-                    exit(1)
-                }
-            }
-            let floats = pcm.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
-            if let buffer = pcmBuffer(sampleRate: sampleRate, floats: floats) {
-                asrs[source]?.append(buffer)
-            }
-        }
-    }
-    RunLoop.main.run()
-    exit(0)
-}
-
 var terminationSignals: [DispatchSourceSignal] = []
 func installTerminationHandlers() {
     for sig in [SIGTERM, SIGINT] {
@@ -1191,9 +1208,6 @@ func installTerminationHandlers() {
 }
 
 let config = parseArgs()
-if config.speechWorker {
-    runSpeechWorker(config: config)
-}
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let delegate = AppController(config: config)
