@@ -39,3 +39,8 @@ docs/debug/
 
 archive/
 .codex/
+
+# Local merge backups
+.conflict-backup-*/
+.devcompanion/
+

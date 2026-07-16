@@ -1,132 +1,134 @@
 # MeetingHelper
 
-MeetingHelper 是一个轻量的 macOS 实时字幕工具。它可以同时捕获麦克风和当前系统声音，在屏幕底部显示字幕，并把文字和调试音频保存在项目目录中。
+English | [中文](README.zh.md)
 
-## 功能
+MeetingHelper is a lightweight macOS live-subtitle tool. It can capture the microphone and current system audio at the same time, show captions at the bottom of the screen, and save transcripts plus debug audio inside the project directory.
 
-- 麦克风、系统声音或双音源捕获
-- Apple 双音源智能门控合并；Sherpa/HF 双音源左右分栏
-- 本地 Sherpa-ONNX 中英双语流式识别
-- Apple Speech 实时识别和音频文件转录
-- 可选择、复制、滚动、隐藏的悬浮字幕窗口
-- Sherpa/HF 分别保存双音源 transcript；Apple 双音源保存合并 transcript
-- Debug 模式保存 WAV，便于检查收音与离线转录
-- Sherpa 模型缺失时自动安装到项目目录
+## Features
 
-## 系统要求
+- Capture microphone, system audio, or both
+- Apple dual-source smart gating (merged); Sherpa/HF dual-source side-by-side panes
+- Local Sherpa-ONNX bilingual Chinese-English streaming recognition
+- Apple Speech realtime recognition and audio-file transcription
+- Selectable, copyable, scrollable, hideable floating caption window
+- Separate dual-source transcripts for Sherpa/HF; merged transcript for Apple dual-source
+- Debug mode saves WAVs for capture checks and offline transcription
+- Auto-installs Sherpa models into the project directory when missing
 
-- macOS 13 或更高版本
-- Xcode Command Line Tools（需要 `xcrun swiftc`）
-- Python 3（仅 Sherpa/Hugging Face 模式需要）
-- 麦克风权限（使用 mic 时）
-- 屏幕录制权限（捕获 system audio 时）
-- 语音识别权限（使用 Apple Speech 时）
+## Requirements
 
-## 快速开始
+- macOS 13 or later
+- Xcode Command Line Tools (`xcrun swiftc`)
+- Python 3 (Sherpa / Hugging Face modes only)
+- Microphone permission (when using `mic`)
+- Screen Recording permission (when capturing system audio)
+- Speech Recognition permission (when using Apple Speech)
 
-进入项目目录：
+## Quick Start
+
+Enter the project directory:
 
 ```bash
-cd /Users/tongtongtot/Desktop/algorithms/MeetingHelper
+cd /path/to/MeetingHelper
 ```
 
-推荐使用本地 Sherpa，同时识别系统声音和麦克风：
+Recommended: local Sherpa, recognizing system audio and microphone together:
 
 ```bash
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-首次运行会自动下载中英双语 INT8 模型。依赖、模型、缓存和临时文件全部保存在 MeetingHelper 中；安装完成后识别不需要联网。
+On first run, the bilingual INT8 model downloads automatically. Dependencies, models, caches, and temp files stay inside MeetingHelper; after install, recognition works offline.
 
-停止：
+Stop:
 
 ```bash
 bash scripts/stop.sh
 ```
 
-## 常用命令
+## Common Commands
 
 ```bash
-# 默认：麦克风 + Apple Speech
+# Default: microphone + Apple Speech
 bash scripts/start.sh
 
-# Apple Speech 合并 system/microphone：system 有声时优先，静音时使用 microphone
+# Apple Speech merges system/microphone: prefer system when active, mic when quiet
 bash scripts/start.sh --source both --asr apple
 
-# 只识别系统声音
+# System audio only
 bash scripts/start.sh --source system --asr sherpa
 
-# 只识别麦克风
+# Microphone only
 bash scripts/start.sh --source mic --asr sherpa
 
-# 同时识别两路声音，显示左右双栏（Sherpa/HF）
+# Both sources, left/right panes (Sherpa/HF)
 bash scripts/start.sh --source both --asr sherpa
 
-# Apple Speech 英文识别
+# Apple Speech English
 bash scripts/start.sh --source mic --asr apple --language en-US
 
-# 显示音量并保存调试 WAV
+# Show levels and save debug WAVs
 bash scripts/start.sh --source both --asr sherpa --debug
 
-# 调整窗口
+# Window size / opacity
 bash scripts/start.sh --source both --asr sherpa --height 160 --opacity 0.85
 ```
 
-主要参数：
+Main options:
 
-| 参数 | 可用值 | 默认值 |
+| Option | Values | Default |
 | --- | --- | --- |
-| `--source` | `mic`、`system`、`both` | `mic` |
-| `--asr` | `apple`、`sherpa`、`hf` | `apple` |
-| `--language` | 例如 `zh-CN`、`en-US` | `zh-CN` |
-| `--output-dir` | transcript 输出目录 | `transcripts/` |
-| `--height` | 字幕窗口高度 | `120` |
-| `--opacity` | 背景透明度 | `0.75` |
-| `--debug` | 开启音量显示与 WAV 保存 | 关闭 |
+| `--source` | `mic`, `system`, `both` | `mic` |
+| `--asr` | `apple`, `sherpa`, `hf` | `apple` |
+| `--language` | e.g. `zh-CN`, `en-US` | `zh-CN` |
+| `--output-dir` | transcript output directory | `transcripts/` |
+| `--height` | caption window height | `120` |
+| `--opacity` | background opacity | `0.75` |
+| `--debug` | show levels and save WAVs | off |
 
-## 字幕窗口
+## Caption Window
 
-- `--source both --asr apple`：智能门控合并两路音频，显示单栏 meeting 字幕并写入主 transcript
-- `--source both` 搭配 Sherpa/HF：左侧显示 speaker/system，右侧显示 microphone
-- `Hide` / `Show`：收起或恢复字幕
-- `Quit`：停止 MeetingHelper
-- 选择文字后按 `Cmd+C`：复制所选字幕
-- 没有选择文字时按 `Cmd+C`：复制当前栏全部字幕
-- 鼠标滚动：查看历史字幕
+- `--source both --asr apple`: smart-gated merge of both streams; single meeting pane + main transcript
+- `--source both` with Sherpa/HF: left = speaker/system, right = microphone
+- `Hide` / `Show`: collapse or restore captions
+- `Quit`: stop MeetingHelper
+- Select text, then `Cmd+C`: copy selection
+- `Cmd+C` with no selection: copy all captions in the current pane
+- Mouse scroll: browse caption history
 
-## 文件位置
+## File Layout
 
-所有运行时文件都位于项目目录：
+All runtime files live under the project directory:
 
 ```text
 MeetingHelper/
-├── scripts/                 # 启动、停止和安装脚本
+├── scripts/                 # start, stop, and setup scripts
 ├── src/
-│   ├── swift/               # macOS 主程序和 Apple Speech 工具
-│   └── python/              # ASR worker 和 transcript 工具
-├── .build/                  # 编译产物、Python 依赖和缓存
-├── models/                  # 本地 Sherpa 模型
-├── transcripts/             # 字幕文字
-│   ├── YYYY-MM-DD.txt       # microphone，或 Apple both 的合并 transcript
+│   ├── swift/               # macOS host and Apple Speech tools
+│   └── python/              # ASR workers and transcript helpers
+├── .build/                  # build artifacts, Python deps, caches
+├── models/                  # local Sherpa models
+├── transcripts/             # caption text
+│   ├── YYYY-MM-DD.txt       # microphone, or merged Apple both transcript
 │   └── YYYY-MM-DD-sys.txt   # speaker/system
-├── debug-audio/             # Debug WAV
+├── debug-audio/             # debug WAVs
 └── logs/
     ├── subtitle.log
     ├── subtitle-stop.log
     └── subtitle.pid
 ```
 
-这些运行时目录已加入 `.gitignore`。
+These runtime directories are in `.gitignore`.
 
-## 转录音频文件
+## Transcribe Audio Files
 
-使用 Apple Speech 手动转录 WAV 或其他受 AVFoundation 支持的音频文件：
+Use Apple Speech to transcribe a WAV (or other AVFoundation-supported file):
 
 ```bash
 bash scripts/transcribe.sh "debug-audio/example.wav" --language en-US
 ```
 
-把结果写入文件：
+Write the result to a file:
 
 ```bash
 bash scripts/transcribe.sh "debug-audio/example.wav" \
@@ -134,28 +136,28 @@ bash scripts/transcribe.sh "debug-audio/example.wav" \
   --output "transcripts/example.txt"
 ```
 
-这个命令在文件处理结束后会自动退出，不会持续运行。
+This command exits after the file is processed; it does not keep running.
 
-## ASR 选择
+## ASR Choices
 
-| 模式 | 适用情况 | 说明 |
+| Mode | Best for | Notes |
 | --- | --- | --- |
-| `sherpa` | 双音源、离线会议字幕 | 推荐；真正流式，中英双语，安装后完全本地 |
-| `apple` | 单音源、智能门控双音源、手动文件转录 | 系统原生；实时任务每 50 秒轮换，可能使用 Apple 在线语音服务 |
-| `hf` | 自行选择 Hugging Face 模型 | 实验模式；依赖和模型需要自行管理 |
+| `sherpa` | Dual-source offline meeting captions | Recommended; true streaming, bilingual, fully local after install |
+| `apple` | Single source, smart-gated dual source, manual file transcription | System-native; realtime tasks rotate every ~50s; may use Apple online speech |
+| `hf` | Custom Hugging Face models | Experimental; you manage deps and models |
 
-## 本地 LLM
+## Local LLM
 
-`src/python/query_transcript.py` 可以把 transcript 发送到兼容 OpenAI API 的本地服务，例如 Ollama：
+`src/python/query_transcript.py` can send a transcript to an OpenAI-compatible local API (e.g. Ollama):
 
 ```bash
 python3 src/python/query_transcript.py \
   transcripts/2026-07-10.txt \
-  "请总结会议结论和待办事项"
+  "Summarize the meeting decisions and action items"
 ```
 
-默认连接 `http://localhost:11434/v1`，默认模型为 `llama3.1`。可以通过 `LOCAL_LLM_BASE_URL`、`LOCAL_LLM_MODEL` 和 `LOCAL_LLM_API_KEY` 修改。
+Default endpoint: `http://localhost:11434/v1`, default model: `llama3.1`. Override with `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`, and `LOCAL_LLM_API_KEY`.
 
-## 完整教程
+## Full Tutorial
 
-权限设置、英文识别、Debug 音频和故障排查见 [tutorial.md](tutorial.md)。
+Permissions, English recognition, debug audio, and troubleshooting: [tutorial.md](tutorial.md) · [中文教程](tutorial.zh.md).

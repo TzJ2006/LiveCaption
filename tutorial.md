@@ -1,35 +1,37 @@
-# MeetingHelper 使用教程
+# MeetingHelper Tutorial
 
-这份教程从零开始介绍如何在 macOS 上运行 MeetingHelper、同时识别系统声音和麦克风、使用英文输入、检查 Debug 音频，以及排查“有声音但没有字幕”等问题。
+English | [中文](tutorial.zh.md)
 
-## 1. 工作方式
+This tutorial walks through running MeetingHelper on macOS: recognizing system audio and microphone together, using English input, checking debug audio, and fixing “I hear sound but no captions.”
 
-MeetingHelper 的 Swift 主程序负责：
+## 1. How It Works
 
-1. 使用 `AVAudioEngine` 捕获麦克风；
-2. 使用 `ScreenCaptureKit` 捕获当前系统输出；
-3. 把音频送给 Apple Speech 或本地 Sherpa-ONNX；
-4. 在屏幕底部显示字幕；
-5. 把最终文字写入 `transcripts/`。
+MeetingHelper’s Swift host:
 
-双音源模式使用两个独立识别 stream 和两个独立字幕区域：
+1. Captures the microphone with `AVAudioEngine`
+2. Captures current system output with `ScreenCaptureKit`
+3. Sends audio to Apple Speech or local Sherpa-ONNX
+4. Shows captions at the bottom of the screen
+5. Writes final text under `transcripts/`
+
+Dual-source mode uses two independent recognition streams and two caption panes:
 
 ```text
 ┌─────────────────────────────┬─────────────────────────────┐
 │ speaker / system            │ microphone                  │
-│ 对方或电脑播放的声音         │ 你对着麦克风说的话           │
+│ Remote or computer playback │ What you say into the mic   │
 └─────────────────────────────┴─────────────────────────────┘
 ```
 
-## 2. 准备环境
+## 2. Prepare the Environment
 
-进入项目目录：
+Enter the project directory:
 
 ```bash
-cd /Users/tongtongtot/Desktop/algorithms/MeetingHelper
+cd /path/to/MeetingHelper
 ```
 
-确认基础工具存在：
+Confirm basic tools:
 
 ```bash
 sw_vers -productVersion
@@ -37,39 +39,39 @@ xcrun --find swiftc
 python3 --version
 ```
 
-如果 `xcrun --find swiftc` 失败，安装 Xcode Command Line Tools：
+If `xcrun --find swiftc` fails, install Xcode Command Line Tools:
 
 ```bash
 xcode-select --install
 ```
 
-## 3. 设置 macOS 权限
+## 3. Grant macOS Permissions
 
-打开“系统设置 → 隐私与安全性”，根据使用的音源开启权限：
+Open **System Settings → Privacy & Security** and enable what your source needs:
 
-- 麦克风：使用 `mic` 或 `both` 时需要；
-- 屏幕录制：使用 `system` 或 `both` 时需要，ScreenCaptureKit 通过这个权限读取系统音频；
-- 语音识别：只有 `--asr apple` 需要。
+- **Microphone**: required for `mic` or `both`
+- **Screen Recording**: required for `system` or `both` (ScreenCaptureKit reads system audio this way)
+- **Speech Recognition**: required only for `--asr apple`
 
-权限列表中可能显示 Terminal、`live-subtitle` 或启动它的终端应用。修改权限后，先停止 MeetingHelper，再重新运行命令；必要时完全退出并重新打开终端。
+The permission list may show Terminal, `live-subtitle`, or the terminal app that launched it. After changing permissions, stop MeetingHelper and run the start command again; if needed, fully quit and reopen the terminal.
 
-## 4. 推荐的第一次启动
+## 4. Recommended First Launch
 
-同时识别会议声音和自己的麦克风：
+Recognize meeting audio and your microphone together:
 
 ```bash
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-如果本地没有 Sherpa，启动脚本会自动：
+If Sherpa is not installed locally, the start script will:
 
-1. 把 Python 依赖安装到 `.build/pydeps/`；
-2. 把下载缓存和临时文件放到 `.build/`；
-3. 把中英双语 INT8 模型安装到 `models/`；
-4. 加载模型进行验证；
-5. 编译并启动字幕窗口。
+1. Install Python deps into `.build/pydeps/`
+2. Put download caches and temp files under `.build/`
+3. Install the bilingual INT8 model into `models/`
+4. Load the model to verify it
+5. Build and launch the caption window
 
-模型下载中断后，再次运行相同命令即可继续。成功后，`models/` 中应有：
+If a download is interrupted, rerun the same command to continue. When finished, `models/` should contain:
 
 ```text
 models/sherpa-onnx-streaming-paraformer-bilingual-zh-en/
@@ -78,75 +80,75 @@ models/sherpa-onnx-streaming-paraformer-bilingual-zh-en/
 └── tokens.txt
 ```
 
-也可以单独运行安装检查：
+Or run setup alone:
 
 ```bash
 bash scripts/setup-sherpa.sh
 ```
 
-## 5. 选择音源
+## 5. Choose an Audio Source
 
-只识别麦克风：
+Microphone only:
 
 ```bash
 bash scripts/start.sh --source mic --asr sherpa
 ```
 
-只识别电脑播放的声音：
+Computer playback only:
 
 ```bash
 bash scripts/start.sh --source system --asr sherpa
 ```
 
-同时识别两路声音：
+Both:
 
 ```bash
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-在 `both` 模式中：
+In `both` mode:
 
-- 左栏 `(speaker)` 来自系统声音；
-- 右栏 `(microphone)` 来自麦克风；
-- 两栏可以同时更新，不会互相覆盖；
-- transcript 文件也分别保存。
+- Left pane `(speaker)` = system audio
+- Right pane `(microphone)` = mic
+- Both panes can update at once without overwriting each other
+- Transcripts are saved separately
 
-## 6. 中文、英文和混合输入
+## 6. Chinese, English, and Mixed Input
 
-Sherpa 使用中英双语模型，不需要指定语言：
+Sherpa uses a bilingual model — no language flag needed:
 
 ```bash
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-它可以处理中文、英文和中英混合内容。专有名词、姓名、缩写和多人重叠说话仍可能识别错误。
+It handles Chinese, English, and mixed speech. Proper nouns, names, acronyms, and overlapping speakers can still be wrong.
 
-使用 Apple Speech 识别中文：
+Apple Speech Chinese:
 
 ```bash
 bash scripts/start.sh --source mic --asr apple --language zh-CN
 ```
 
-使用 Apple Speech 识别英文：
+Apple Speech English:
 
 ```bash
 bash scripts/start.sh --source mic --asr apple --language en-US
 ```
 
-双音源会议建议优先使用 Sherpa，避免依赖 Apple Speech 的并发实时任务。
+For dual-source meetings, prefer Sherpa so you are not limited by Apple Speech concurrent realtime tasks.
 
-## 7. 使用字幕窗口
+## 7. Using the Caption Window
 
-字幕窗口位于屏幕底部：
+The window sits at the bottom of the screen:
 
-- `Hide`：把窗口收起到按钮高度；
-- `Show`：恢复完整字幕；
-- `Quit`：运行停止脚本并关闭程序；
-- 选择字幕后按 `Cmd+C`：复制选择内容；
-- 不选择文字时按 `Cmd+C`：复制当前栏全部历史；
-- 使用鼠标滚轮：查看更早的字幕。
+- `Hide`: collapse to button height
+- `Show`: restore full captions
+- `Quit`: run the stop script and exit
+- Select captions, then `Cmd+C`: copy selection
+- `Cmd+C` with no selection: copy full history for the current pane
+- Mouse wheel: scroll older captions
 
-调整窗口高度和背景透明度：
+Adjust height and opacity:
 
 ```bash
 bash scripts/start.sh \
@@ -156,68 +158,68 @@ bash scripts/start.sh \
   --opacity 0.85
 ```
 
-参数变化需要停止并重新启动才能生效。
+Parameter changes need a stop + restart to take effect.
 
-## 8. Transcript 和日志
+## 8. Transcripts and Logs
 
-麦克风最终字幕：
+Microphone final captions:
 
 ```text
 transcripts/YYYY-MM-DD.txt
 ```
 
-系统声音最终字幕：
+System-audio final captions:
 
 ```text
 transcripts/YYYY-MM-DD-sys.txt
 ```
 
-运行日志：
+Runtime log:
 
 ```text
 logs/subtitle.log
 ```
 
-停止日志：
+Stop log:
 
 ```text
 logs/subtitle-stop.log
 ```
 
-查看最近日志：
+Recent log lines:
 
 ```bash
 tail -n 100 logs/subtitle.log
 ```
 
-所有这些文件都在 MeetingHelper 目录中。
+All of these files stay inside the MeetingHelper directory.
 
-## 9. Debug 音频
+## 9. Debug Audio
 
-如果程序能够收音但不显示字幕，使用 Debug 模式：
+If capture works but captions do not appear, use debug mode:
 
 ```bash
 bash scripts/stop.sh
 bash scripts/start.sh --source both --asr sherpa --debug
 ```
 
-窗口会显示两路输入的 dB 音量，并在 `debug-audio/` 生成：
+The window shows dB levels for both inputs and writes under `debug-audio/`:
 
 ```text
 YYYY-MM-DD-HHMMSS-microphone.wav
 YYYY-MM-DD-HHMMSS-speaker.wav
 ```
 
-判断方法：
+How to read it:
 
-- 音量一直是 `waiting`：该音源没有送入音频帧；
-- dB 数值变化但没有字幕：检查 ASR、语言或模型日志；
-- WAV 能被文件转录识别：采集链路基本正常，应继续检查实时 ASR；
-- WAV 本身几乎无声：检查输入设备、系统音量或权限。
+- Level stuck on `waiting`: that source is not delivering audio frames
+- dB moves but no captions: check ASR, language, or model logs
+- WAV transcribes via file transcription: capture path is OK; focus on realtime ASR
+- WAV is nearly silent: check input device, system volume, or permissions
 
-## 10. 手动转录一个音频文件
+## 10. Manually Transcribe a File
 
-使用 Apple Speech 输出到终端：
+Apple Speech to the terminal:
 
 ```bash
 bash scripts/transcribe.sh \
@@ -225,7 +227,7 @@ bash scripts/transcribe.sh \
   --language en-US
 ```
 
-保存到项目内的 transcript 文件：
+Save into the project:
 
 ```bash
 bash scripts/transcribe.sh \
@@ -234,91 +236,96 @@ bash scripts/transcribe.sh \
   --output "transcripts/manual-transcription.txt"
 ```
 
-中文文件使用 `--language zh-CN`。路径包含空格时必须加引号。该命令会等待完整文件处理结束，然后退出。
+Use `--language zh-CN` for Chinese files. Quote paths that contain spaces. The command waits until the whole file is processed, then exits.
 
-## 11. 停止和重新启动
+## 11. Stop and Restart
 
-正常停止：
+Normal stop:
 
 ```bash
 bash scripts/stop.sh
 ```
 
-然后重新启动：
+Then start again:
 
 ```bash
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-如果提示 `Subtitle window already running`，先运行停止命令。停止脚本会同时清理主程序和 Sherpa/Hugging Face 子进程。
+If you see `Subtitle window already running`, run the stop command first. The stop script also cleans up Sherpa / Hugging Face child processes.
 
-## 12. 常见问题
+## 12. Common Issues
 
-### 字幕窗口没有出现
+### Caption window does not appear
 
-检查日志：
+Check the log:
 
 ```bash
 tail -n 100 logs/subtitle.log
 ```
 
-然后重新启动：
+Then restart:
 
 ```bash
 bash scripts/stop.sh
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-### 系统声音没有字幕
+### No captions for system audio
 
-1. 确认命令包含 `--source system` 或 `--source both`；
-2. 确认“屏幕录制”权限已开启；
-3. 让电脑实际播放一段有声音的内容；
-4. 使用 `--debug` 检查 speaker dB；
-5. 修改权限后重新启动程序。
+1. Confirm the command uses `--source system` or `--source both`
+2. Confirm Screen Recording is enabled
+3. Play audible content on the computer
+4. Use `--debug` and check speaker dB
+5. Restart after changing permissions
 
-### 麦克风没有字幕
+### No captions for the microphone
 
-1. 确认“麦克风”权限已开启；
-2. 使用 `--debug` 检查 microphone dB；
-3. 检查生成的 `*-microphone.wav`；
-4. 使用 `transcribe.sh` 手动转录该文件。
+1. Confirm Microphone permission is enabled
+2. Use `--debug` and check microphone dB
+3. Inspect the generated `*-microphone.wav`
+4. Run `transcribe.sh` on that file manually
 
-### 出现 `No speech detected`
+### `No speech detected`
 
-这不一定表示超时，也可能是音量过低、噪声、语言设置不匹配或音频太短。先检查 Debug WAV：如果文件转录成功但实时字幕为空，问题更可能位于实时识别链路。
+This is not always a timeout — it can mean low volume, noise, wrong language, or audio that is too short. Check the debug WAV first: if file transcription works but live captions are empty, the problem is more likely in the realtime ASR path.
 
-### Sherpa 模型安装失败
+### Sherpa model install failed
 
-确认网络和磁盘空间，然后重新运行：
+Check network and disk space, then rerun:
 
 ```bash
 bash scripts/setup-sherpa.sh
 ```
 
-未完成的下载保存在 `models/*.part`，下次运行会尝试继续。不要把模型移动到用户主目录；程序固定从 MeetingHelper 的 `models/` 读取。
+Incomplete downloads stay in `models/*.part` and resume next time. Do not move models into your home directory; the app always reads from MeetingHelper’s `models/`.
 
-### 两路声音只有一路有内容
+### Only one of two sources has content
 
-先分别测试：
+Test separately:
 
 ```bash
 bash scripts/start.sh --source mic --asr sherpa --debug
 ```
 
-停止后再测试：
+Stop, then:
 
 ```bash
 bash scripts/start.sh --source system --asr sherpa --debug
 ```
 
-两路单独都正常后，再使用 `--source both`。Sherpa 会为两路音频创建独立 stream。
+When both work alone, use `--source both`. Sherpa creates an independent stream per source.
 
-## 13. 本地处理与隐私
+## 13. Local Processing and Privacy
 
-- Sherpa 模型安装完成后，实时识别在本机完成；
-- transcript、日志、Debug WAV、模型和缓存都保存在 MeetingHelper；
-- Apple Speech 可能使用 Apple 在线语音服务；
-- Hugging Face 模式的第三方依赖与缓存不由自动安装器管理；如果要求所有文件都留在项目目录，请使用 Sherpa；
-- `src/python/query_transcript.py` 会把 transcript 发送到你配置的 API 地址，默认是本机 Ollama；
-- 录制会议前应确认参与者同意，并遵守所在地法律和组织政策。
+- After Sherpa models are installed, realtime recognition stays on-device
+- Transcripts, logs, debug WAVs, models, and caches stay under MeetingHelper
+- Apple Speech may use Apple’s online speech services
+- Hugging Face mode deps/caches are not managed by the auto-installer; use Sherpa if everything must stay in the project directory
+- `src/python/query_transcript.py` sends transcript text to the API you configure (default: local Ollama)
+- Confirm participant consent and follow local law and org policy before recording meetings
+
+## Next Steps
+
+- Overview: [README.md](README.md) · [中文](README.zh.md)
+- Architecture notes for agents: [AGENTS.md](AGENTS.md)
