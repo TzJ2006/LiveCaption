@@ -1,12 +1,14 @@
-# MeetingHelper Tutorial
+# LiveCaption Tutorial
 
 English | [中文](tutorial.zh.md)
 
-This tutorial walks through running MeetingHelper on macOS: recognizing system audio and microphone together, using English input, checking debug audio, and fixing “I hear sound but no captions.”
+**LiveCaption** is a lightweight multi-backend speech-to-text framework for macOS. This tutorial covers running it: system audio + microphone, English input, debug audio, and fixing “I hear sound but no captions.”
+
+Meetings are a common use case (Zoom/Teams/Meet + your mic), but the same flow works for lectures, videos, or any live audio you want as text.
 
 ## 1. How It Works
 
-MeetingHelper’s Swift host:
+LiveCaption’s Swift host:
 
 1. Captures the microphone with `AVAudioEngine`
 2. Captures current system output with `ScreenCaptureKit`
@@ -28,7 +30,7 @@ Dual-source mode uses two independent recognition streams and two caption panes:
 Enter the project directory:
 
 ```bash
-cd /path/to/MeetingHelper
+cd /path/to/LiveCaption
 ```
 
 Confirm basic tools:
@@ -53,7 +55,7 @@ Open **System Settings → Privacy & Security** and enable what your source need
 - **Screen Recording**: required for `system` or `both` (ScreenCaptureKit reads system audio this way)
 - **Speech Recognition**: required only for `--asr apple`
 
-The permission list may show Terminal, `live-subtitle`, or the terminal app that launched it. After changing permissions, stop MeetingHelper and run the start command again; if needed, fully quit and reopen the terminal.
+The permission list may show Terminal, `live-subtitle`, or the terminal app that launched it. After changing permissions, stop LiveCaption and run the start command again; if needed, fully quit and reopen the terminal.
 
 ## 4. Recommended First Launch
 
@@ -192,7 +194,7 @@ Recent log lines:
 tail -n 100 logs/subtitle.log
 ```
 
-All of these files stay inside the MeetingHelper directory.
+All of these files stay inside the LiveCaption directory.
 
 ## 9. Debug Audio
 
@@ -298,7 +300,7 @@ Check network and disk space, then rerun:
 bash scripts/setup-sherpa.sh
 ```
 
-Incomplete downloads stay in `models/*.part` and resume next time. Do not move models into your home directory; the app always reads from MeetingHelper’s `models/`.
+Incomplete downloads stay in `models/*.part` and resume next time. Do not move models into your home directory; the app always reads from LiveCaption’s `models/`.
 
 ### Only one of two sources has content
 
@@ -319,7 +321,7 @@ When both work alone, use `--source both`. Sherpa creates an independent stream 
 ## 13. Local Processing and Privacy
 
 - After Sherpa models are installed, realtime recognition stays on-device
-- Transcripts, logs, debug WAVs, models, and caches stay under MeetingHelper
+- Transcripts, logs, debug WAVs, models, and caches stay under LiveCaption
 - Apple Speech may use Apple’s online speech services
 - Hugging Face mode deps/caches are not managed by the auto-installer; use Sherpa if everything must stay in the project directory
 - `src/python/query_transcript.py` sends transcript text to the API you configure (default: local Ollama)

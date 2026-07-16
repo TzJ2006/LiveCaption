@@ -1,12 +1,15 @@
-# MeetingHelper
+# LiveCaption
 
 English | [中文](README.zh.md)
 
-MeetingHelper is a lightweight macOS live-subtitle tool. It can capture the microphone and current system audio at the same time, show captions at the bottom of the screen, and save transcripts plus debug audio inside the project directory.
+**LiveCaption** is a lightweight, multi-backend speech-to-text framework for macOS. Capture the microphone, system audio, or both; pick an ASR backend (Apple Speech, local Sherpa-ONNX, or Hugging Face); show live captions; and save transcripts in the project directory.
+
+Meetings are a natural fit — Zoom/Teams/Meet system audio + your mic — but the same stack works for lectures, videos, language practice, or any live audio you want as text.
 
 ## Features
 
 - Capture microphone, system audio, or both
+- Pluggable ASR: `apple` · `sherpa` · `hf`
 - Apple dual-source smart gating (merged); Sherpa/HF dual-source side-by-side panes
 - Local Sherpa-ONNX bilingual Chinese-English streaming recognition
 - Apple Speech realtime recognition and audio-file transcription
@@ -26,19 +29,17 @@ MeetingHelper is a lightweight macOS live-subtitle tool. It can capture the micr
 
 ## Quick Start
 
-Enter the project directory:
-
 ```bash
-cd /path/to/MeetingHelper
+cd /path/to/LiveCaption
 ```
 
-Recommended: local Sherpa, recognizing system audio and microphone together:
+Recommended for meetings / dual audio (local Sherpa):
 
 ```bash
 bash scripts/start.sh --source both --asr sherpa
 ```
 
-On first run, the bilingual INT8 model downloads automatically. Dependencies, models, caches, and temp files stay inside MeetingHelper; after install, recognition works offline.
+On first run, the bilingual INT8 model downloads automatically. Dependencies, models, caches, and temp files stay inside the project; after install, recognition works offline.
 
 Stop:
 
@@ -61,7 +62,7 @@ bash scripts/start.sh --source system --asr sherpa
 # Microphone only
 bash scripts/start.sh --source mic --asr sherpa
 
-# Both sources, left/right panes (Sherpa/HF)
+# Both sources, left/right panes (Sherpa/HF) — useful in meetings
 bash scripts/start.sh --source both --asr sherpa
 
 # Apple Speech English
@@ -88,10 +89,10 @@ Main options:
 
 ## Caption Window
 
-- `--source both --asr apple`: smart-gated merge of both streams; single meeting pane + main transcript
+- `--source both --asr apple`: smart-gated merge of both streams; single pane + main transcript
 - `--source both` with Sherpa/HF: left = speaker/system, right = microphone
 - `Hide` / `Show`: collapse or restore captions
-- `Quit`: stop MeetingHelper
+- `Quit`: stop LiveCaption
 - Select text, then `Cmd+C`: copy selection
 - `Cmd+C` with no selection: copy all captions in the current pane
 - Mouse scroll: browse caption history
@@ -101,7 +102,7 @@ Main options:
 All runtime files live under the project directory:
 
 ```text
-MeetingHelper/
+LiveCaption/
 ├── scripts/                 # start, stop, and setup scripts
 ├── src/
 │   ├── swift/               # macOS host and Apple Speech tools
@@ -138,11 +139,11 @@ bash scripts/transcribe.sh "debug-audio/example.wav" \
 
 This command exits after the file is processed; it does not keep running.
 
-## ASR Choices
+## ASR Backends
 
 | Mode | Best for | Notes |
 | --- | --- | --- |
-| `sherpa` | Dual-source offline meeting captions | Recommended; true streaming, bilingual, fully local after install |
+| `sherpa` | Dual-source offline captions (e.g. meetings) | Recommended; true streaming, bilingual, fully local after install |
 | `apple` | Single source, smart-gated dual source, manual file transcription | System-native; realtime tasks rotate every ~50s; may use Apple online speech |
 | `hf` | Custom Hugging Face models | Experimental; you manage deps and models |
 

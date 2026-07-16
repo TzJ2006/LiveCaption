@@ -1,12 +1,14 @@
-# MeetingHelper 使用教程
+# LiveCaption 使用教程
 
 [English](tutorial.md) | 中文
 
-这份教程从零开始介绍如何在 macOS 上运行 MeetingHelper、同时识别系统声音和麦克风、使用英文输入、检查 Debug 音频，以及排查“有声音但没有字幕”等问题。
+**LiveCaption** 是一个轻量、多后端的 macOS 语音转文字框架。本教程从零开始介绍如何运行它：同时识别系统声音和麦克风、使用英文输入、检查 Debug 音频，以及排查“有声音但没有字幕”等问题。
+
+会议是常见场景（Zoom/Teams/Meet + 麦克风），同一流程也适用于讲座、视频，或任何你想转成文字的实时音频。
 
 ## 1. 工作方式
 
-MeetingHelper 的 Swift 主程序负责：
+LiveCaption 的 Swift 主程序负责：
 
 1. 使用 `AVAudioEngine` 捕获麦克风；
 2. 使用 `ScreenCaptureKit` 捕获当前系统输出；
@@ -28,7 +30,7 @@ MeetingHelper 的 Swift 主程序负责：
 进入项目目录：
 
 ```bash
-cd /path/to/MeetingHelper
+cd /path/to/LiveCaption
 ```
 
 确认基础工具存在：
@@ -53,7 +55,7 @@ xcode-select --install
 - 屏幕录制：使用 `system` 或 `both` 时需要，ScreenCaptureKit 通过这个权限读取系统音频；
 - 语音识别：只有 `--asr apple` 需要。
 
-权限列表中可能显示 Terminal、`live-subtitle` 或启动它的终端应用。修改权限后，先停止 MeetingHelper，再重新运行命令；必要时完全退出并重新打开终端。
+权限列表中可能显示 Terminal、`live-subtitle` 或启动它的终端应用。修改权限后，先停止 LiveCaption，再重新运行命令；必要时完全退出并重新打开终端。
 
 ## 4. 推荐的第一次启动
 
@@ -192,7 +194,7 @@ logs/subtitle-stop.log
 tail -n 100 logs/subtitle.log
 ```
 
-所有这些文件都在 MeetingHelper 目录中。
+所有这些文件都在 LiveCaption 目录中。
 
 ## 9. Debug 音频
 
@@ -298,7 +300,7 @@ bash scripts/start.sh --source both --asr sherpa
 bash scripts/setup-sherpa.sh
 ```
 
-未完成的下载保存在 `models/*.part`，下次运行会尝试继续。不要把模型移动到用户主目录；程序固定从 MeetingHelper 的 `models/` 读取。
+未完成的下载保存在 `models/*.part`，下次运行会尝试继续。不要把模型移动到用户主目录；程序固定从 LiveCaption 的 `models/` 读取。
 
 ### 两路声音只有一路有内容
 
@@ -319,7 +321,7 @@ bash scripts/start.sh --source system --asr sherpa --debug
 ## 13. 本地处理与隐私
 
 - Sherpa 模型安装完成后，实时识别在本机完成；
-- transcript、日志、Debug WAV、模型和缓存都保存在 MeetingHelper；
+- transcript、日志、Debug WAV、模型和缓存都保存在 LiveCaption；
 - Apple Speech 可能使用 Apple 在线语音服务；
 - Hugging Face 模式的第三方依赖与缓存不由自动安装器管理；如果要求所有文件都留在项目目录，请使用 Sherpa；
 - `src/python/query_transcript.py` 会把 transcript 发送到你配置的 API 地址，默认是本机 Ollama；

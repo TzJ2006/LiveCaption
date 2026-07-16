@@ -19,7 +19,7 @@ log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$message" >> "$STOP_LOG"
 }
 
-log "MeetingHelper stop started"
+log "LiveCaption stop started"
 
 kill_pid() {
     local pid="$1"
@@ -80,5 +80,5 @@ if [[ "$stopped" -eq 0 ]]; then
     log "No subtitle window running"
     exit 1
 else
-    log "MeetingHelper stop finished: stopped $stopped process(es)"
+    log "LiveCaption stop finished: stopped $stopped process(es)"
 fi
