@@ -19,7 +19,7 @@ import numpy as np
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hf-model", required=True)
-    parser.add_argument("--chunk-seconds", type=float, default=2.0)
+    parser.add_argument("--chunk-seconds", type=float, default=3.0)
     return parser.parse_args()
 
 
@@ -27,16 +27,42 @@ def main():
     args = parse_args()
 
     try:
-        from transformers import pipeline
+        import torch
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
     except ImportError:
-        print("Install transformers to use --asr hf: pip install transformers torch", file=sys.stderr)
-        return 1
+        torch, device = None, "cpu"
+    print(f"ASR device: {device}" + ("" if device.startswith("cuda") else " (torch cannot see a GPU)"),
+          file=sys.stderr)
 
-    asr = pipeline(
-        "automatic-speech-recognition",
-        model=args.hf_model,
-        trust_remote_code=False,
-    )
+    # ponytail: Qwen3-ASR needs its own package; everything else stays on the generic pipeline
+    if "qwen3-asr" in args.hf_model.lower():
+        try:
+            from qwen_asr import Qwen3ASRModel
+        except ImportError:
+            print("Install qwen-asr to use Qwen3-ASR models: pip install qwen-asr", file=sys.stderr)
+            return 1
+        if device.startswith("cuda"):
+            model = Qwen3ASRModel.from_pretrained(args.hf_model, dtype=torch.bfloat16, device_map=device)
+        else:
+            model = Qwen3ASRModel.from_pretrained(args.hf_model)
+
+        def asr(inputs):
+            results = model.transcribe(audio=(inputs["array"], inputs["sampling_rate"]))
+            return {"text": results[0].text}
+    else:
+        try:
+            from transformers import pipeline
+        except ImportError:
+            print("Install transformers to use --asr hf: pip install transformers torch", file=sys.stderr)
+            return 1
+
+        asr = pipeline(
+            "automatic-speech-recognition",
+            model=args.hf_model,
+            trust_remote_code=False,
+            device=device,
+        )
+    print(json.dumps({"status": "ready", "device": device}), flush=True)
     buffers = defaultdict(list)
     sample_rates = {}
 
