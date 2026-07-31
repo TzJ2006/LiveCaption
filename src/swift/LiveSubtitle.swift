@@ -45,6 +45,8 @@ struct Config {
     var stopScript: String
     var debug = false
     var debugDir: String
+    var record = false
+    var recordDir: String
 
     var displaySources: [Source] {
         if asrMode == .apple && sourceMode == .both { return [.mixed] }
@@ -71,7 +73,8 @@ func parseArgs() -> Config {
         hfScript: projectDir.appendingPathComponent("src/python/hf_asr_worker.py").path,
         sherpaScript: projectDir.appendingPathComponent("src/python/sherpa_asr_worker.py").path,
         stopScript: projectDir.appendingPathComponent("scripts/stop.sh").path,
-        debugDir: projectDir.appendingPathComponent("debug-audio").path
+        debugDir: projectDir.appendingPathComponent("debug-audio").path,
+        recordDir: projectDir.appendingPathComponent("recordings").path
     )
 
     var args = Array(CommandLine.arguments.dropFirst())
@@ -115,6 +118,10 @@ func parseArgs() -> Config {
             config.sherpaScript = value()
         case "--debug":
             config.debug = true
+        case "--record":
+            config.record = true
+        case "--record-dir":
+            config.recordDir = value()
         case "--help", "-h":
             print("""
             Usage:
@@ -123,6 +130,7 @@ func parseArgs() -> Config {
               live-subtitle --asr hf --hf-model openai/whisper-small
               live-subtitle --asr sherpa
               live-subtitle --debug
+              live-subtitle --record [--record-dir <dir>]
             """)
             exit(0)
         default:
@@ -880,7 +888,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     init(config: Config) {
         self.config = config
         self.writer = TranscriptWriter(path: config.outputDir)
-        self.debugRecorder = config.debug ? DebugRecorder(path: config.debugDir) : nil
+        // ponytail: --record reuses the debug WAV recorder, just without the level overlay
+        self.debugRecorder = config.debug
+            ? DebugRecorder(path: config.debugDir)
+            : (config.record ? DebugRecorder(path: config.recordDir) : nil)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1006,7 +1017,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func startAudio() throws {
-        let needsFloats = config.asrMode != .apple || config.debug || config.sourceMode == .both
+        let needsFloats = config.asrMode != .apple || config.debug || config.record || config.sourceMode == .both
         let onFloats: ((Source, Double, [Float]) -> Void)? = needsFloats ? { [weak self] source, rate, floats in
             self?.handleFloats(source: source, sampleRate: rate, floats: floats)
         } : nil
@@ -1040,6 +1051,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         guard let debugRecorder else { return }
         let level = debugRecorder.record(source: source, sampleRate: sampleRate, floats: floats)
+        guard config.debug else { return }
         DispatchQueue.main.async {
             if let mixedLevel {
                 self.debugLevels[.mixed] = mixedLevel

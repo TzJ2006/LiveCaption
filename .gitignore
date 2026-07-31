@@ -44,3 +44,11 @@ archive/
 .conflict-backup-*/
 .devcompanion/
 
+
+# Local config (copy config.example.json to config.json)
+config.json
+recordings/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
