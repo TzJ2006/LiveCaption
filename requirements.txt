@@ -1,0 +1,17 @@
+# Core host deps
+numpy>=1.26
+pyaudiowpatch; sys_platform == "win32"
+
+# --asr hf with Qwen3-ASR / Qwen3-ForcedAligner
+qwen-asr
+# floors so resolvers don't backtrack to pre-3.12 wheels (llvmlite 0.36 build failure)
+numba>=0.59
+llvmlite>=0.42
+# --asr hf with other Hugging Face models
+transformers
+# CUDA wheels (Windows/Linux default to CPU-only without this index)
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch
+
+# --asr sherpa (macOS installs via scripts/setup-sherpa.sh instead)
+# sherpa-onnx
