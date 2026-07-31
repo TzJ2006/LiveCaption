@@ -3,6 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ponytail: non-macOS -> Python host (Windows WASAPI loopback), same flags
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo "WSL cannot capture Windows audio. Run scripts\\start.bat from PowerShell instead;"
+        echo "WSL is only used as the ASR backend via --asr wsl-vllm."
+        exit 1
+    fi
+    exec python3 "$PROJECT_DIR/src/python/win_host.py" "$@"
+fi
 BUILD_DIR="$PROJECT_DIR/.build"
 BIN="$BUILD_DIR/live-subtitle"
 LOG_DIR="$PROJECT_DIR/logs"
@@ -16,6 +26,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/transcripts}"
 OPACITY="${SUBTITLE_OPACITY:-0.75}"
 HEIGHT="${SUBTITLE_HEIGHT:-120}"
 DEBUG="${DEBUG:-0}"
+RECORD="${RECORD:-0}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -27,6 +38,7 @@ while [[ $# -gt 0 ]]; do
         --opacity) OPACITY="$2"; shift 2 ;;
         --height) HEIGHT="$2"; shift 2 ;;
         --debug) DEBUG="1"; shift ;;
+        --record) RECORD="1"; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -82,6 +94,9 @@ fi
 if [[ "$DEBUG" == "1" ]]; then
     ARGS+=(--debug)
 fi
+if [[ "$RECORD" == "1" ]]; then
+    ARGS+=(--record)
+fi
 
 nohup "$BIN" "${ARGS[@]}" > "$LOG_DIR/subtitle.log" 2>&1 &
 PID=$!
@@ -94,6 +109,9 @@ echo "Language: $LANGUAGE"
 echo "Transcripts: $OUTPUT_DIR"
 if [[ "$DEBUG" == "1" ]]; then
     echo "Debug audio: $PROJECT_DIR/debug-audio"
+fi
+if [[ "$RECORD" == "1" ]]; then
+    echo "Recordings: $PROJECT_DIR/recordings"
 fi
 echo "Log: $LOG_DIR/subtitle.log"
 echo "Stop: bash $SCRIPT_DIR/stop.sh"
