@@ -1,0 +1,12 @@
+{
+  "source": "both",
+  "asr": "hf",
+  "hf-model": "Qwen/Qwen3-ASR-0.6B",
+  "chunk-seconds": 3.0,
+  "wsl-python": "/home/you/miniconda3/envs/AI/bin/python",
+  "language": "zh-CN",
+  "opacity": 0.75,
+  "height": 120,
+  "record": false,
+  "debug": false
+}
