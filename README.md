@@ -93,8 +93,8 @@ Main options:
 - `--source both` with Sherpa/HF: left = speaker/system, right = microphone
 - `Hide` / `Show`: collapse or restore captions
 - `Quit`: stop LiveCaption
-- Select text, then `Cmd+C`: copy selection
-- `Cmd+C` with no selection: copy all captions in the current pane
+- Select text, then `Cmd+C` (Windows: `Ctrl+C`): copy selection
+- Same shortcut with no selection: copy all captions in the current pane
 - Mouse scroll: browse caption history
 
 ## File Layout
