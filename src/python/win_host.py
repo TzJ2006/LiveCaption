@@ -2,7 +2,9 @@
 """Windows host for LiveCaption: mic and/or speaker output -> ASR worker -> caption overlay.
 
 Speaker capture uses WASAPI loopback (no virtual audio driver needed).
-Reuses the same NDJSON workers as the macOS Swift host (hf_asr_worker.py / sherpa_asr_worker.py).
+Reuses the same NDJSON workers as the macOS Swift host (hf_asr_worker.py / sherpa_asr_worker.py);
+the Overlay class below is a port of SubtitleWindow in src/swift/LiveSubtitle.swift -- same
+geometry, colours, controls and text model, so both hosts look and behave the same.
 
 Usage:
   python src/python/win_host.py --source both --asr hf --hf-model Qwen/Qwen3-ASR-0.6B [--record]
@@ -12,6 +14,7 @@ Deps: pip install pyaudiowpatch numpy  (plus the chosen worker's deps)
 
 import argparse
 import base64
+import ctypes
 import datetime
 import json
 import os
@@ -19,12 +22,25 @@ import queue
 import subprocess
 import sys
 import threading
+import time
+import tkinter as tk
 import wave
 
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(os.path.dirname(HERE))
+
+# AppKit colours the Swift host draws with
+WHITE = "#ffffff"
+LIVE = "#b8b8b8"    # NSColor(white: 0.72)
+YELLOW = "#ffcc00"  # .systemYellow
+GREEN = "#28cd41"   # .systemGreen
+ORANGE = "#ff9500"  # .systemOrange
+CAPTION_FAMILY = "Consolas"
+BUTTON_FAMILY = "Segoe UI"
+PREFIXES = {"mic": "(microphone) ", "sys": "(speaker) ", "mixed": "(meeting) "}
+RECORD_LABELS = {"mic": "microphone", "sys": "speaker", "mixed": "meeting"}
 
 
 def parse_args():
@@ -43,6 +59,7 @@ def parse_args():
     p.add_argument("--output-dir", default=os.path.join(PROJECT, "transcripts"))
     p.add_argument("--record", action="store_true")
     p.add_argument("--record-dir", default=os.path.join(PROJECT, "recordings"))
+    p.add_argument("--debug-dir", default=os.path.join(PROJECT, "debug-audio"))
     p.add_argument("--opacity", type=float, default=0.75)
     p.add_argument("--height", type=int, default=120)
     p.add_argument("--debug", action="store_true")
@@ -54,6 +71,8 @@ def parse_args():
     args = p.parse_args()
     if args.asr == "hf" and not args.hf_model:
         sys.exit("--asr hf requires --hf-model <huggingface/model-id>")
+    args.opacity = min(1.0, max(0.1, args.opacity))  # same clamps as the Swift host
+    args.height = min(500, max(70, int(args.height)))
     return args
 
 
@@ -62,6 +81,47 @@ def downmix(int16_bytes, channels):
     if channels > 1:
         audio = audio.reshape(-1, channels).mean(axis=1)
     return audio
+
+
+def enable_dpi_awareness():
+    """Opt into real pixels before the first window exists.
+
+    A DPI-unaware process gets rendered at 96 DPI and bitmap-stretched by Windows, which makes the
+    captions blurry on any display scaled above 100%.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        user32.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
+        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):  # PER_MONITOR_AWARE_V2
+            return
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Windows 8.1 fallback
+    except (OSError, AttributeError):
+        pass
+
+
+def work_area_bottom(fallback):
+    """Desktop bottom minus the taskbar.
+
+    The Swift host pins the strip to screen.minY; the Windows taskbar is always-on-top, so the
+    same coordinate would hide the Hide/Quit bar behind it.
+    """
+    try:
+        class RECT(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_long) for name in ("left", "top", "right", "bottom")]
+
+        rect = RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+            return rect.bottom
+    except (OSError, AttributeError, ValueError):
+        pass
+    return fallback
+
+
+def rms_db(floats):
+    """Level meter matching rmsDB() in LiveSubtitle.swift: -90 floor, +6 ceiling."""
+    rms = float(np.sqrt(np.mean(np.square(floats)))) if len(floats) else 0.0
+    return -90.0 if rms <= 1e-6 else float(np.clip(20 * np.log10(rms), -90, 6))
 
 
 class Recorder:
@@ -75,7 +135,8 @@ class Recorder:
         with self.lock:
             f = self.files.get(source)
             if f is None:
-                f = wave.open(os.path.join(self.directory, f"{self.run_id}-{source}.wav"), "wb")
+                label = RECORD_LABELS.get(source, source)
+                f = wave.open(os.path.join(self.directory, f"{self.run_id}-{label}.wav"), "wb")
                 f.setnchannels(1)
                 f.setsampwidth(2)
                 f.setframerate(int(sample_rate))
@@ -86,6 +147,166 @@ class Recorder:
         with self.lock:
             for f in self.files.values():
                 f.close()
+
+
+class Overlay:
+    """Port of SubtitleWindow (src/swift/LiveSubtitle.swift).
+
+    Borderless always-on-top strip pinned to the bottom of the screen: sys | mic columns above a
+    34pt control bar with Hide/Quit. Each source keeps an append-only history; the current line is
+    rewritten in place (gray while partial, white once final) and prefixed with (speaker)/
+    (microphone). Scrolling only follows the tail when the view is already at the bottom.
+    """
+
+    def __init__(self, sources, height, opacity, on_quit):
+        self.sources, self.on_quit = sources, on_quit
+        self.collapsed = False
+        self.line_starts, self.places = {}, {}
+        self.live_texts, self.live_colors, self.debug_prefixes, self.levels = {}, {}, {}, {}
+        self.texts = {}
+
+        enable_dpi_awareness()
+        self.root = root = tk.Tk()
+        # ponytail: the Swift sizes below are macOS points; scale them once here. The strip stays
+        # on the primary monitor, so a per-monitor DPI change mid-run is not worth handling.
+        self.scale = root.winfo_fpixels("1i") / 96.0
+        self.height, self.bar_height = self._px(height), self._px(34)
+        self.left = self._px(50)
+        root.overrideredirect(True)
+        root.attributes("-topmost", True)
+        root.attributes("-alpha", opacity)
+        root.configure(bg="black")
+        self.width = root.winfo_screenwidth() - 2 * self.left
+        self.top = work_area_bottom(root.winfo_screenheight()) - self.height
+        root.geometry(f"{self.width}x{self.height}+{self.left}+{self.top}")
+        self.caption_font = (CAPTION_FAMILY, -self._px(14))
+
+        # textFrame(in:) -- 10pt side margins, 34pt control bar below, 5pt above
+        x, y = self._px(10), self._px(5)
+        w, h = self.width - self._px(20), max(self._px(40), self.height - self._px(39))
+        if len(sources) == 2:
+            gap = self._px(8)
+            half = (w - gap) // 2
+            self._add_region(sources[0], x, y, half, h)
+            self._add_region(sources[1], x + half + gap, y, half, h)
+        else:
+            self._add_region(sources[0], x, y, w, h)
+
+        style = dict(fg="white", font=(BUTTON_FAMILY, -self._px(11), "bold"), bd=0, relief="flat",
+                     highlightthickness=0, activeforeground="white", cursor="hand2")
+        self.quit_btn = tk.Button(root, text="Quit", bg="#9e1f26", activebackground="#b53039",
+                                  command=self.quit, **style)
+        self.hide_btn = tk.Button(root, text="Hide", bg="#1a5780", activebackground="#26709f",
+                                  command=self.toggle, **style)
+        self._place_buttons(self.height)
+
+        root.bind("<Escape>", lambda _e: self.quit())
+        root.bind_all("<Control-c>", self._copy)
+        root.bind_all("<MouseWheel>", self._wheel)
+
+    def _px(self, points):
+        """macOS point -> physical pixel on this display."""
+        return round(points * self.scale)
+
+    def _add_region(self, source, x, y, w, h):
+        txt = tk.Text(self.root, bg="black", fg=WHITE, font=self.caption_font, wrap="word", bd=0,
+                      padx=0, pady=0, highlightthickness=0, cursor="arrow", insertwidth=0,
+                      state="disabled")
+        for color in (WHITE, LIVE, YELLOW, GREEN, ORANGE):
+            txt.tag_config(color, foreground=color)
+        self.places[source] = dict(x=x, y=y, width=w, height=h)
+        txt.place(**self.places[source])
+        self.texts[source] = txt
+        self.line_starts[source] = "1.0"
+
+    # --- text model (replaceLine / setStatus / update / showDebug in Swift) ---
+
+    def _prefix(self, source):
+        return PREFIXES.get(source, "")
+
+    def _replace_line(self, text, color, source):
+        """Rewrite everything after the last committed line, Swift's replaceLine()."""
+        txt = self.texts.get(source)
+        if txt is None:
+            return
+        follow = txt.yview()[1] > 0.99  # isNearBottom()
+        start = self.line_starts[source]
+        txt.configure(state="normal")
+        txt.delete(start, "end")
+        # ponytail: separator leads the pending line — Tk owns the trailing newline and would
+        # swallow a committed one on the next delete-to-end
+        txt.insert(start, ("" if start == "1.0" else "\n") + text, color)
+        txt.configure(state="disabled")
+        if follow:
+            txt.see("end-1c")
+
+    def _commit_line(self, source):
+        self.line_starts[source] = self.texts[source].index("end-1c")
+
+    def set_status(self, text, source):
+        self._replace_line(self._prefix(source) + text, YELLOW, source)
+        self._commit_line(source)
+
+    def update(self, text, source, final):
+        if source not in self.texts:
+            return
+        color = WHITE if final else LIVE
+        self.live_texts[source], self.live_colors[source] = text, color
+        prefix = self.debug_prefixes.get(source, self._prefix(source))
+        self._replace_line(f"{prefix}{text}", color, source)
+        if final:
+            self._commit_line(source)
+            self.live_texts.pop(source, None)
+            self.live_colors.pop(source, None)
+
+    def show_debug(self):
+        for source in self.sources:
+            level = f"{self.levels[source]:.1f} dB" if source in self.levels else "waiting"
+            prefix = f"{self._prefix(source)}{level}  "
+            self.debug_prefixes[source] = prefix
+            if source in self.live_texts:
+                self._replace_line(prefix + self.live_texts[source],
+                                   self.live_colors.get(source, WHITE), source)
+            else:
+                self._replace_line(prefix, GREEN, source)
+
+    # --- controls ---
+
+    def _place_buttons(self, height):
+        box = dict(y=height - self._px(28), width=self._px(52), height=self._px(22))
+        self.quit_btn.place(x=self.width - self._px(62), **box)
+        self.hide_btn.place(x=self.width - self._px(120), **box)
+
+    def toggle(self):
+        self.collapsed = not self.collapsed
+        self.hide_btn.config(text="Show" if self.collapsed else "Hide")
+        height = self.bar_height if self.collapsed else self.height
+        for source, txt in self.texts.items():
+            txt.place_forget() if self.collapsed else txt.place(**self.places[source])
+        # bottom edge stays put, so the top moves down while collapsed
+        self.root.geometry(f"{self.width}x{height}+{self.left}+{self.top + self.height - height}")
+        self._place_buttons(height)
+
+    def quit(self):
+        for source in self.sources:
+            self._replace_line("Stopping LiveCaption...", ORANGE, source)
+        self.on_quit()
+
+    def _copy(self, _event=None):
+        value = None
+        for txt in self.texts.values():
+            if txt.tag_ranges("sel"):
+                value = txt.get("sel.first", "sel.last")
+                break
+        if value is None:
+            value = self.texts[self.sources[0]].get("1.0", "end-1c")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(value)
+
+    def _wheel(self, event):
+        widget = self.root.winfo_containing(event.x_root, event.y_root)
+        if isinstance(widget, tk.Text):
+            widget.yview_scroll(-event.delta // 120, "units")
 
 
 def capture_loop(pa, device, source, send, stop):
@@ -104,8 +325,10 @@ def capture_loop(pa, device, source, send, stop):
 
 def main():
     args = parse_args()
-    run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    recorder = Recorder(args.record_dir, run_id) if args.record else None
+    run_id = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    # ponytail: --debug reuses the recorder, just pointed at debug-audio/ (same as the Swift host)
+    recorder = (Recorder(args.debug_dir if args.debug else args.record_dir, run_id)
+                if args.debug or args.record else None)
 
     # spawn the ASR worker (same NDJSON protocol as the Swift host)
     if args.asr == "hf":
@@ -130,8 +353,7 @@ def main():
         if recorder:
             recorder.write(source, rate, floats)
         if args.debug:
-            db = 20 * np.log10(max(float(np.sqrt(np.mean(floats ** 2))), 1e-6))
-            texts.put(("__level__", source, db))
+            texts.put(("__level__", source, rms_db(floats)))
         line = json.dumps({"type": "audio", "source": source, "sampleRate": rate,
                            "pcmFloat32": base64.b64encode(floats.tobytes()).decode()})
         with stdin_lock:
@@ -163,11 +385,15 @@ def main():
     for t in threads:
         t.start()
 
-    # transcripts, same layout as the Swift host
+    # transcripts, same layout as the Swift host (date resolved per line, so a run can cross midnight)
     os.makedirs(args.output_dir, exist_ok=True)
-    day = datetime.date.today().isoformat()
-    paths = {"mic": os.path.join(args.output_dir, f"{day}.txt"),
-             "sys": os.path.join(args.output_dir, f"{day}-sys.txt")}
+    pending = {}
+
+    def append_transcript(source, text):
+        day = datetime.date.today().isoformat()
+        suffix = "-sys" if source == "sys" else ""
+        with open(os.path.join(args.output_dir, f"{day}{suffix}.txt"), "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.now():%H:%M:%S}] {text}\n")
 
     def read_worker():
         for line in worker.stdout:
@@ -176,135 +402,56 @@ def main():
             except ValueError:
                 continue
             if event.get("status") == "ready":
-                texts.put(("__ready__", event.get("device", ""), False))
+                print(f"worker ready: {event.get('device', '')}", file=sys.stderr)
                 continue
             text, source = event.get("text", "").strip(), event.get("source", "mic")
             if not text:
                 continue
-            texts.put((source, text, bool(event.get("final"))))
-            if event.get("final"):
-                with open(paths.get(source, paths["mic"]), "a", encoding="utf-8") as f:
-                    f.write(f"[{datetime.datetime.now():%H:%M:%S}] {text}\n")
+            final = bool(event.get("final"))
+            texts.put((source, text, final))
+            if final:
+                append_transcript(source, text)
+                pending.pop(source, None)
+            else:
+                pending[source] = text
         stop.set()
 
     threading.Thread(target=read_worker, daemon=True).start()
 
-    # overlay mirroring the macOS window: bottom strip, sys | mic columns,
-    # (speaker)/(microphone) prefixes, scrolling history, gray live -> white final
-    import tkinter as tk
-    prefixes = {"sys": "(speaker) ", "mic": "(microphone) "}
-    root = tk.Tk()
-    root.overrideredirect(True)
-    root.attributes("-topmost", True)
-    root.attributes("-alpha", max(0.1, min(1.0, args.opacity)))
-    root.configure(bg="black")
-    width = root.winfo_screenwidth() - 100
-    bottom_y = root.winfo_screenheight() - args.height - 50
-    root.geometry(f"{width}x{args.height}+50+{bottom_y}")
     sources = ["sys", "mic"] if args.source == "both" else ["mic"] if args.source == "mic" else ["sys"]
-    widgets, finals = {}, {s: [] for s in sources}
+    overlay = Overlay(sources, args.height, args.opacity, stop.set)
+    if args.debug:
+        overlay.show_debug()
+    else:
+        for source in sources:
+            overlay.set_status("Listening...", source)
+    overlay.root.after(0, overlay.root.focus_force)
 
-    # bottom-right Hide/Quit controls, same as the macOS window
-    controls = tk.Frame(root, bg="black")
-    controls.pack(side="bottom", fill="x")
-    text_area = tk.Frame(root, bg="black")
-    text_area.pack(side="top", fill="both", expand=True)
-    collapsed = [False]
-
-    def toggle():
-        collapsed[0] = not collapsed[0]
-        if collapsed[0]:
-            text_area.pack_forget()
-            root.geometry(f"{width}x34+50+{bottom_y + args.height - 34}")
-            hide_btn.config(text="Show")
-        else:
-            text_area.pack(side="top", fill="both", expand=True)
-            root.geometry(f"{width}x{args.height}+50+{bottom_y}")
-            hide_btn.config(text="Hide")
-
-    btn_style = dict(fg="white", font=("Segoe UI", 9, "bold"), bd=0, width=6,
-                     activeforeground="white", cursor="hand2")
-    quit_btn = tk.Button(controls, text="Quit", bg="#9e1f26", activebackground="#b53039",
-                         command=stop.set, **btn_style)
-    quit_btn.pack(side="right", padx=(4, 10), pady=4)
-    hide_btn = tk.Button(controls, text="Hide", bg="#1a5780", activebackground="#26709f",
-                         command=toggle, **btn_style)
-    hide_btn.pack(side="right", pady=4)
-
-    for source in sources:
-        txt = tk.Text(text_area, bg="black", fg="white", font=("Segoe UI", 14), wrap="word",
-                      bd=0, highlightthickness=0, cursor="arrow")
-        txt.tag_config("final", foreground="white")
-        txt.tag_config("live", foreground="#b8b8b8")
-        txt.tag_config("status", foreground="#e6c84a")
-        txt.pack(side="left", fill="both", expand=True, padx=(12, 4))
-        widgets[source] = txt
-
-    statuses = {s: "Loading ASR model... (first run downloads it)" for s in sources}
-    live_texts = {s: None for s in sources}
-    levels = {}
-
-    def prefix(source):
-        if not args.debug:
-            return prefixes[source]
-        level = f"{levels[source]:.1f} dB" if source in levels else "waiting"
-        return f"{prefixes[source]}{level}  "
-
-    def render(source):
-        txt = widgets[source]
-        txt.configure(state="normal")
-        txt.delete("1.0", "end")
-        # ponytail: flowing paragraph, not one line per chunk
-        history = " ".join(finals[source][-100:])
-        if history:
-            txt.insert("end", history + " ", "final")
-        if live_texts[source] is not None:
-            txt.insert("end", prefix(source) + live_texts[source], "live")
-        elif not finals[source]:
-            txt.insert("end", prefix(source) + statuses[source], "status")
-        else:
-            txt.insert("end", prefix(source) if args.debug else "", "status")
-        txt.see("end")
-        txt.configure(state="disabled")
-
-    for source in sources:
-        render(source)
-
-    root.bind("<Escape>", lambda e: stop.set())
+    last_debug_draw = [0.0]
 
     def poll():
         while not texts.empty():
             source, text, final = texts.get()
-            if source == "__ready__":
-                for s in sources:
-                    statuses[s] = f"Listening... [{text}]" if text else "Listening..."
-                    render(s)
-                continue
             if source == "__level__":
-                if text in widgets:
-                    levels[text] = final
-                    render(text)
+                overlay.levels[text] = final
+                now = time.monotonic()
+                if now - last_debug_draw[0] >= 0.15:  # same redraw throttle as the Swift host
+                    last_debug_draw[0] = now
+                    overlay.show_debug()
                 continue
-            if source not in widgets:
-                continue
-            if final:
-                # ponytail: prefix only on the live/status line, not every history line;
-                # drop the trailing period Qwen appends to every isolated chunk
-                finals[source].append(text.rstrip("。."))
-                live_texts[source] = None
-            else:
-                live_texts[source] = text
-            render(source)
+            overlay.update(text, source, final)
         if stop.is_set():
-            root.destroy()
+            overlay.root.destroy()
             return
-        root.after(100, poll)
+        overlay.root.after(100, poll)
 
-    root.after(100, poll)
+    overlay.root.after(100, poll)
     try:
-        root.mainloop()
+        overlay.root.mainloop()
     finally:
         stop.set()
+        for source, text in pending.items():  # applicationWillTerminate() flushes partials too
+            append_transcript(source, text)
         if recorder:
             recorder.close()
         worker.terminate()
@@ -318,6 +465,22 @@ def self_test():
     mono = downmix(stereo, 2)
     assert mono.shape == (2,) and abs(mono[0] - 2000 / 32768.0) < 1e-6
     assert np.frombuffer(base64.b64decode(base64.b64encode(mono.tobytes())), dtype=np.float32).shape == (2,)
+    assert rms_db(np.zeros(4, dtype=np.float32)) == -90.0
+    assert abs(rms_db(np.ones(4, dtype=np.float32)) - 0.0) < 1e-6
+
+    # overlay text model: partial lines are rewritten in place, finals become history
+    overlay = Overlay(["mic"], 120, 1.0, lambda: None)
+    overlay.root.withdraw()
+    overlay.set_status("Listening...", "mic")
+    overlay.update("hello", "mic", False)
+    overlay.update("hello world", "mic", True)
+    overlay.update("next", "mic", False)
+    body = overlay.texts["mic"].get("1.0", "end-1c")
+    assert body == "(microphone) Listening...\n(microphone) hello world\n(microphone) next", repr(body)
+    overlay.levels["mic"] = -12.34
+    overlay.show_debug()
+    assert overlay.texts["mic"].get("3.0", "end-1c") == "(microphone) -12.3 dB  next"
+    overlay.root.destroy()
     print("self-test ok")
 
 
