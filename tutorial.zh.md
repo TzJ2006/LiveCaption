@@ -145,9 +145,9 @@ bash scripts/start.sh --source mic --asr apple --language en-US
 
 - `Hide`：把窗口收起到按钮高度；
 - `Show`：恢复完整字幕；
-- `Quit`：运行停止脚本并关闭程序；
-- 选择字幕后按 `Cmd+C`：复制选择内容；
-- 不选择文字时按 `Cmd+C`：复制当前栏全部历史；
+- `Quit`：停止 LiveCaption 并退出（macOS 会调用 `scripts/stop.sh`）；
+- 选择字幕后按 `Cmd+C`（Windows 为 `Ctrl+C`）：复制选择内容；
+- 不选择文字时按同样的快捷键：复制当前栏全部历史；
 - 使用鼠标滚轮：查看更早的字幕。
 
 调整窗口高度和背景透明度：

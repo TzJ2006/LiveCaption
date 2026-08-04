@@ -145,9 +145,9 @@ The window sits at the bottom of the screen:
 
 - `Hide`: collapse to button height
 - `Show`: restore full captions
-- `Quit`: run the stop script and exit
-- Select captions, then `Cmd+C`: copy selection
-- `Cmd+C` with no selection: copy full history for the current pane
+- `Quit`: stop LiveCaption and exit (macOS runs `scripts/stop.sh`)
+- Select captions, then `Cmd+C` (Windows: `Ctrl+C`): copy selection
+- Same shortcut with no selection: copy full history for the current pane
 - Mouse wheel: scroll older captions
 
 Adjust height and opacity:
