@@ -93,8 +93,8 @@ bash scripts/start.sh --source both --asr sherpa --height 160 --opacity 0.85
 - `--source both` 搭配 Sherpa/HF：左侧显示 speaker/system，右侧显示 microphone
 - `Hide` / `Show`：收起或恢复字幕
 - `Quit`：停止 LiveCaption
-- 选择文字后按 `Cmd+C`：复制所选字幕
-- 没有选择文字时按 `Cmd+C`：复制当前栏全部字幕
+- 选择文字后按 `Cmd+C`（Windows 为 `Ctrl+C`）：复制所选字幕
+- 没有选择文字时按同样的快捷键：复制当前栏全部字幕
 - 鼠标滚动：查看历史字幕
 
 ## 文件位置
