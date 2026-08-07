@@ -91,7 +91,8 @@ Main options:
 
 - `--source both --asr apple`: smart-gated merge of both streams; single pane + main transcript
 - `--source both` with Sherpa/HF: left = speaker/system, right = microphone
-- `Hide` / `Show`: collapse or restore captions
+- Drag handle (left of `Hide`): move the window anywhere on screen
+- `Hide` / `Show`: collapse to a pill holding just the control bar, or restore captions
 - `Quit`: stop LiveCaption
 - Select text, then `Cmd+C` (Windows: `Ctrl+C`): copy selection
 - Same shortcut with no selection: copy all captions in the current pane

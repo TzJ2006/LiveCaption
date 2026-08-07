@@ -153,14 +153,25 @@ class Overlay:
     """Port of SubtitleWindow (src/swift/LiveSubtitle.swift).
 
     Borderless always-on-top strip pinned to the bottom of the screen: sys | mic columns above a
-    34pt control bar with Hide/Quit. Each source keeps an append-only history; the current line is
-    rewritten in place (gray while partial, white once final) and prefixed with (speaker)/
-    (microphone). Scrolling only follows the tail when the view is already at the bottom.
+    34pt control bar holding a drag handle, Hide and Quit. Each source keeps an append-only
+    history; the current line is rewritten in place (gray while partial, white once final) and
+    prefixed with (speaker)/(microphone). Scrolling only follows the tail when the view is already
+    at the bottom. Dragging the handle moves the window; Hide collapses it to a pill that keeps
+    only the control bar, anchored at the window's bottom-right corner.
     """
+
+    # layoutControls()/collapsedWidth in Swift; macOS points, scaled through _px()
+    BAR_H = 34
+    BTN_W, BTN_H = 52, 22
+    HANDLE = 22
+    GAP, PAD = 6, 6
+    MIN_VISIBLE = 24  # DragHandleView.clampedOrigin keeps this much of the window reachable
+    COLLAPSED_W = PAD + HANDLE + GAP + BTN_W + GAP + BTN_W + PAD
 
     def __init__(self, sources, height, opacity, on_quit):
         self.sources, self.on_quit = sources, on_quit
         self.collapsed = False
+        self.drag_from = None
         self.line_starts, self.places = {}, {}
         self.live_texts, self.live_colors, self.debug_prefixes, self.levels = {}, {}, {}, {}
         self.texts = {}
@@ -170,15 +181,16 @@ class Overlay:
         # ponytail: the Swift sizes below are macOS points; scale them once here. The strip stays
         # on the primary monitor, so a per-monitor DPI change mid-run is not worth handling.
         self.scale = root.winfo_fpixels("1i") / 96.0
-        self.height, self.bar_height = self._px(height), self._px(34)
-        self.left = self._px(50)
+        self.height, self.bar_height = self._px(height), self._px(self.BAR_H)
+        self.collapsed_width = self._px(self.COLLAPSED_W)
         root.overrideredirect(True)
         root.attributes("-topmost", True)
         root.attributes("-alpha", opacity)
         root.configure(bg="black")
-        self.width = root.winfo_screenwidth() - 2 * self.left
-        self.top = work_area_bottom(root.winfo_screenheight()) - self.height
-        root.geometry(f"{self.width}x{self.height}+{self.left}+{self.top}")
+        # the Swift window spans the full screen.width since the drag handle landed
+        self.width = root.winfo_screenwidth()
+        self.work_bottom = work_area_bottom(root.winfo_screenheight())
+        self._apply_geometry(0, self.work_bottom - self.height, self.width, self.height)
         self.caption_font = (CAPTION_FAMILY, -self._px(14))
 
         # textFrame(in:) -- 10pt side margins, 34pt control bar below, 5pt above
@@ -198,7 +210,8 @@ class Overlay:
                                   command=self.quit, **style)
         self.hide_btn = tk.Button(root, text="Hide", bg="#1a5780", activebackground="#26709f",
                                   command=self.toggle, **style)
-        self._place_buttons(self.height)
+        self.handle = self._make_handle()
+        self._layout_controls(self.width, self.height)
 
         root.bind("<Escape>", lambda _e: self.quit())
         root.bind_all("<Control-c>", self._copy)
@@ -272,20 +285,76 @@ class Overlay:
 
     # --- controls ---
 
-    def _place_buttons(self, height):
-        box = dict(y=height - self._px(28), width=self._px(52), height=self._px(22))
-        self.quit_btn.place(x=self.width - self._px(62), **box)
-        self.hide_btn.place(x=self.width - self._px(120), **box)
+    def _make_handle(self):
+        """DragHandleView: grab strip with two dots that moves the whole window.
+
+        # ponytail: Tk has no layer cornerRadius, so the handle's 5pt rounding is dropped rather
+        # than hand-drawn on a Canvas -- the borderless window already skips its own 8pt radius.
+        """
+        size = self._px(self.HANDLE)
+        canvas = tk.Canvas(self.root, width=size, height=size, bg="#595959", bd=0,
+                           highlightthickness=0, cursor="fleur")
+        dot = self._px(3)
+        for offset in (-self._px(3.5), self._px(3.5)):  # Swift draws them at midY +2 / -5
+            cx, cy = size / 2, size / 2 + offset
+            canvas.create_oval(cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2,
+                               fill="#bfbfbf", outline="")
+        canvas.bind("<ButtonPress-1>", self._drag_start)
+        canvas.bind("<B1-Motion>", self._drag_move)
+        return canvas
+
+    def _current_size(self):
+        return (self.collapsed_width, self.bar_height) if self.collapsed else (self.width, self.height)
+
+    def _clamp(self, left, top, width, height):
+        """DragHandleView.clampedOrigin(), flipped into Tk's top-left origin.
+
+        MIN_VISIBLE stays reachable on the left, right and top; the bottom edge never sinks past
+        the work area, mirroring the Swift clamp against screenFrame.minY. Multi-monitor setups
+        clamp to the primary display only, like the rest of this overlay.
+        """
+        visible = self._px(self.MIN_VISIBLE)
+        left = min(max(left, visible - width), self.root.winfo_screenwidth() - visible)
+        top = min(max(top, visible - height), self.work_bottom - height)
+        return int(left), int(top)
+
+    def _apply_geometry(self, left, top, width, height):
+        self.left, self.top = self._clamp(left, top, width, height)
+        self.root.geometry(f"{width}x{height}+{self.left}+{self.top}")
+
+    def _drag_start(self, event):
+        self.drag_from = (event.x_root, event.y_root, self.left, self.top)
+
+    def _drag_move(self, event):
+        if self.drag_from is None:
+            return
+        start_x, start_y, left, top = self.drag_from
+        self._apply_geometry(left + event.x_root - start_x, top + event.y_root - start_y,
+                             *self._current_size())
+
+    def _layout_controls(self, width, height):
+        """layoutControls(in:) -- handle, Hide and Quit right-aligned inside the control bar."""
+        y = height - self._px(self.PAD + self.BTN_H)
+        quit_x = width - self._px(self.PAD + self.BTN_W)
+        hide_x = quit_x - self._px(self.GAP + self.BTN_W)
+        box = dict(y=y, width=self._px(self.BTN_W), height=self._px(self.BTN_H))
+        self.quit_btn.place(x=quit_x, **box)
+        self.hide_btn.place(x=hide_x, **box)
+        self.handle.place(x=hide_x - self._px(self.GAP + self.HANDLE), y=y,
+                          width=self._px(self.HANDLE), height=self._px(self.HANDLE))
 
     def toggle(self):
+        """toggleVisibility(): collapse to a pill holding just the control bar."""
+        width, height = self._current_size()
         self.collapsed = not self.collapsed
         self.hide_btn.config(text="Show" if self.collapsed else "Hide")
-        height = self.bar_height if self.collapsed else self.height
+        new_width, new_height = self._current_size()
         for source, txt in self.texts.items():
             txt.place_forget() if self.collapsed else txt.place(**self.places[source])
-        # bottom edge stays put, so the top moves down while collapsed
-        self.root.geometry(f"{self.width}x{height}+{self.left}+{self.top + self.height - height}")
-        self._place_buttons(height)
+        # the bottom-right corner stays put, so the pill grows back up and to the left
+        self._apply_geometry(self.left + width - new_width, self.top + height - new_height,
+                             new_width, new_height)
+        self._layout_controls(new_width, new_height)
 
     def quit(self):
         for source in self.sources:
@@ -480,6 +549,20 @@ def self_test():
     overlay.levels["mic"] = -12.34
     overlay.show_debug()
     assert overlay.texts["mic"].get("3.0", "end-1c") == "(microphone) -12.3 dB  next"
+
+    # collapsing pins the pill to the window's bottom-right corner and expanding restores it
+    expanded, corner = (overlay.left, overlay.top), (overlay.left + overlay.width,
+                                                     overlay.top + overlay.height)
+    overlay.toggle()
+    assert overlay.collapsed
+    assert (overlay.left + overlay.collapsed_width, overlay.top + overlay.bar_height) == corner
+    overlay.toggle()
+    assert not overlay.collapsed and (overlay.left, overlay.top) == expanded
+
+    # the drag clamp keeps MIN_VISIBLE reachable instead of losing the window off-screen
+    assert overlay._clamp(-99999, -99999, overlay.width, overlay.height) == (
+        overlay._px(overlay.MIN_VISIBLE) - overlay.width,
+        overlay._px(overlay.MIN_VISIBLE) - overlay.height)
     overlay.root.destroy()
     print("self-test ok")
 

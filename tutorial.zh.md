@@ -141,10 +141,11 @@ bash scripts/start.sh --source mic --asr apple --language en-US
 
 ## 7. 使用字幕窗口
 
-字幕窗口位于屏幕底部：
+字幕窗口初始位于屏幕底部，横向铺满整个屏幕宽度：
 
-- `Hide`：把窗口收起到按钮高度；
-- `Show`：恢复完整字幕；
+- 拖动手柄（`Hide` 左侧）：拖动窗口；窗口始终会有一角留在屏幕内；
+- `Hide`：收起为只剩控制栏的小条，对齐窗口右下角；
+- `Show`：从小条向左上方展开，恢复完整字幕；
 - `Quit`：停止 LiveCaption 并退出（macOS 会调用 `scripts/stop.sh`）；
 - 选择字幕后按 `Cmd+C`（Windows 为 `Ctrl+C`）：复制选择内容；
 - 不选择文字时按同样的快捷键：复制当前栏全部历史；

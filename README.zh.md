@@ -91,7 +91,8 @@ bash scripts/start.sh --source both --asr sherpa --height 160 --opacity 0.85
 
 - `--source both --asr apple`：智能门控合并两路音频，显示单栏字幕并写入主 transcript
 - `--source both` 搭配 Sherpa/HF：左侧显示 speaker/system，右侧显示 microphone
-- `Hide` / `Show`：收起或恢复字幕
+- 拖动手柄（`Hide` 左侧）：把窗口拖到屏幕任意位置
+- `Hide` / `Show`：收起为只剩控制栏的小条，或恢复完整字幕
 - `Quit`：停止 LiveCaption
 - 选择文字后按 `Cmd+C`（Windows 为 `Ctrl+C`）：复制所选字幕
 - 没有选择文字时按同样的快捷键：复制当前栏全部字幕
