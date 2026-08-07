@@ -327,16 +327,103 @@ final class CaptionTextView: NSTextView {
     }
 }
 
+final class DragHandleView: NSView {
+    private var dragStartScreen: NSPoint?
+    private var windowStartOrigin: NSPoint?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(calibratedWhite: 0.35, alpha: 0.95).cgColor
+        layer?.cornerRadius = 5
+        toolTip = "Drag to move"
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let dot = NSColor(calibratedWhite: 0.75, alpha: 1)
+        let size: CGFloat = 3
+        let cx = bounds.midX - size / 2
+        let top = NSRect(x: cx, y: bounds.midY + 2, width: size, height: size)
+        let bottom = NSRect(x: cx, y: bounds.midY - 5, width: size, height: size)
+        dot.setFill()
+        NSBezierPath(ovalIn: top).fill()
+        NSBezierPath(ovalIn: bottom).fill()
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSCursor.closedHand.push()
+        dragStartScreen = NSEvent.mouseLocation
+        windowStartOrigin = window?.frame.origin
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window,
+              let dragStartScreen,
+              let windowStartOrigin else { return }
+        let current = NSEvent.mouseLocation
+        var origin = NSPoint(
+            x: windowStartOrigin.x + (current.x - dragStartScreen.x),
+            y: windowStartOrigin.y + (current.y - dragStartScreen.y)
+        )
+        origin = Self.clampedOrigin(origin, size: window.frame.size)
+        window.setFrameOrigin(origin)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        NSCursor.pop()
+        dragStartScreen = nil
+        windowStartOrigin = nil
+    }
+
+    static func clampedOrigin(_ origin: NSPoint, size: NSSize) -> NSPoint {
+        let screenFrame = NSScreen.screens
+            .map(\.visibleFrame)
+            .first(where: { $0.contains(NSPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)) })
+            ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let minVisible: CGFloat = 24
+        let minX = screenFrame.minX + minVisible - size.width
+        let maxX = screenFrame.maxX - minVisible
+        let minY = screenFrame.minY
+        let maxY = screenFrame.maxY - minVisible
+        return NSPoint(
+            x: min(max(origin.x, minX), maxX),
+            y: min(max(origin.y, minY), maxY)
+        )
+    }
+}
+
 final class SubtitleWindow {
+    private static let controlBarHeight: CGFloat = 34
+    private static let controlButtonWidth: CGFloat = 52
+    private static let controlButtonHeight: CGFloat = 22
+    private static let dragHandleSize: CGFloat = 22
+    private static let controlGap: CGFloat = 6
+    private static let controlPadding: CGFloat = 6
+    private static let collapsedWidth: CGFloat =
+        controlPadding + dragHandleSize + controlGap
+        + controlButtonWidth + controlGap
+        + controlButtonWidth + controlPadding
+
     private let window: NSWindow
     private let stopScript: String
     private let sources: [Source]
     private var textViews: [Source: CaptionTextView] = [:]
     private var scrollViews: [Source: NSScrollView] = [:]
+    private let dragHandle = DragHandleView(frame: .zero)
     private let hideButton = NSButton(title: "Hide", target: nil, action: nil)
     private let quitButton = NSButton(title: "Quit", target: nil, action: nil)
     private var stopProcess: Process?
-    private var expandedFrame: NSRect
+    private var expandedSize: NSSize
     private var collapsed = false
     private var lineStarts: [Source: Int] = [:]
     private var debugPrefixes: [Source: String] = [:]
@@ -347,8 +434,8 @@ final class SubtitleWindow {
         stopScript = config.stopScript
         sources = config.displaySources
         let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
-        let rect = NSRect(x: screen.minX + 50, y: screen.minY, width: screen.width - 100, height: config.height)
-        expandedFrame = rect
+        let rect = NSRect(x: screen.minX, y: screen.minY, width: screen.width, height: config.height)
+        expandedSize = rect.size
         window = CaptionWindow(
             contentRect: rect,
             styleMask: .borderless,
@@ -385,12 +472,33 @@ final class SubtitleWindow {
         setButtonTitle(hideButton, collapsed ? "Show" : "Hide")
         scrollViews.values.forEach { $0.isHidden = collapsed }
         if collapsed {
-            var frame = window.frame
-            frame.size.height = 34
-            frame.origin.y = expandedFrame.minY
-            window.setFrame(frame, display: true, animate: false)
+            expandedSize = window.frame.size
+            let pillOrigin = NSPoint(
+                x: window.frame.maxX - Self.collapsedWidth,
+                y: window.frame.minY
+            )
+            let origin = DragHandleView.clampedOrigin(
+                pillOrigin,
+                size: NSSize(width: Self.collapsedWidth, height: Self.controlBarHeight)
+            )
+            window.setFrame(
+                NSRect(origin: origin, size: NSSize(width: Self.collapsedWidth, height: Self.controlBarHeight)),
+                display: true,
+                animate: false
+            )
         } else {
-            window.setFrame(expandedFrame, display: true, animate: false)
+            let current = window.frame
+            // Keep the control strip under the handle: expand left and up from the pill.
+            var origin = NSPoint(
+                x: current.maxX - expandedSize.width,
+                y: current.minY
+            )
+            origin = DragHandleView.clampedOrigin(origin, size: expandedSize)
+            window.setFrame(NSRect(origin: origin, size: expandedSize), display: true, animate: false)
+            relayoutTextRegions()
+        }
+        if let content = window.contentView {
+            layoutControls(in: content.bounds)
         }
     }
 
@@ -475,19 +583,43 @@ final class SubtitleWindow {
         quitButton.action = #selector(quitClicked)
         styleButton(hideButton, title: "Hide", background: NSColor(calibratedRed: 0.10, green: 0.34, blue: 0.50, alpha: 1))
         styleButton(quitButton, title: "Quit", background: NSColor(calibratedRed: 0.62, green: 0.12, blue: 0.15, alpha: 1))
+        dragHandle.autoresizingMask = [.minXMargin, .maxYMargin]
+        content.addSubview(dragHandle)
         content.addSubview(hideButton)
         content.addSubview(quitButton)
         layoutControls(in: content.bounds)
     }
 
     private func layoutControls(in bounds: NSRect) {
-        let y = bounds.minY + 6
-        quitButton.frame = NSRect(x: bounds.maxX - 62, y: y, width: 52, height: 22)
-        hideButton.frame = NSRect(x: bounds.maxX - 120, y: y, width: 52, height: 22)
+        let y = bounds.minY + Self.controlPadding
+        let quitX = bounds.maxX - Self.controlPadding - Self.controlButtonWidth
+        let hideX = quitX - Self.controlGap - Self.controlButtonWidth
+        let dragX = hideX - Self.controlGap - Self.dragHandleSize
+        quitButton.frame = NSRect(x: quitX, y: y, width: Self.controlButtonWidth, height: Self.controlButtonHeight)
+        hideButton.frame = NSRect(x: hideX, y: y, width: Self.controlButtonWidth, height: Self.controlButtonHeight)
+        dragHandle.frame = NSRect(x: dragX, y: y, width: Self.dragHandleSize, height: Self.dragHandleSize)
     }
 
     private func textFrame(in bounds: NSRect) -> NSRect {
-        NSRect(x: 10, y: 34, width: bounds.width - 20, height: max(40, bounds.height - 39))
+        NSRect(
+            x: 10,
+            y: Self.controlBarHeight,
+            width: bounds.width - 20,
+            height: max(40, bounds.height - Self.controlBarHeight - 5)
+        )
+    }
+
+    private func relayoutTextRegions() {
+        guard let content = window.contentView else { return }
+        let frame = textFrame(in: content.bounds)
+        if sources.count == 2 {
+            let gap: CGFloat = 8
+            let width = (frame.width - gap) / 2
+            scrollViews[.sys]?.frame = NSRect(x: frame.minX, y: frame.minY, width: width, height: frame.height)
+            scrollViews[.mic]?.frame = NSRect(x: frame.minX + width + gap, y: frame.minY, width: width, height: frame.height)
+        } else if let source = sources.first {
+            scrollViews[source]?.frame = frame
+        }
     }
 
     private func styleButton(_ button: NSButton, title: String, background: NSColor) {
