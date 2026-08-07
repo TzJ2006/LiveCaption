@@ -141,10 +141,11 @@ For dual-source meetings, prefer Sherpa so you are not limited by Apple Speech c
 
 ## 7. Using the Caption Window
 
-The window sits at the bottom of the screen:
+The window starts at the bottom of the screen, spanning its full width:
 
-- `Hide`: collapse to button height
-- `Show`: restore full captions
+- Drag handle (left of `Hide`): move the window; it always keeps a corner reachable on screen
+- `Hide`: collapse to a pill holding just the control bar, anchored at the bottom-right corner
+- `Show`: restore full captions, growing back up and to the left from the pill
 - `Quit`: stop LiveCaption and exit (macOS runs `scripts/stop.sh`)
 - Select captions, then `Cmd+C` (Windows: `Ctrl+C`): copy selection
 - Same shortcut with no selection: copy full history for the current pane
