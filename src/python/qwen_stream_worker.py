@@ -6,6 +6,9 @@ final=false; every --finalize-seconds the stream is flushed as final=true
 so transcripts get written.
 
 Install inside WSL:  pip install -U "qwen-asr[vllm]"
+
+# ponytail: unlike hf_asr_worker.py this one keeps HF's default Linux cache -- vLLM would be
+# loading multi-GB weights over the /mnt 9p mount on every start.
 """
 
 import argparse
