@@ -1,9 +1,12 @@
 {
-  "source": "both",
+  "source": "auto",
   "asr": "hf",
   "hf-model": "Qwen/Qwen3-ASR-0.6B",
+  "hf-models": ["Qwen/Qwen3-ASR-0.6B", "openai/whisper-large-v3-turbo",
+                "nvidia/nemotron-3.5-asr-streaming-0.6b"],
   "chunk-seconds": 3.0,
   "wsl-python": "/home/you/miniconda3/envs/AI/bin/python",
+  "hf-stream-python": "C:\\path\\to\\transformers5-env\\python.exe",
   "language": "zh-CN",
   "opacity": 0.75,
   "height": 120,

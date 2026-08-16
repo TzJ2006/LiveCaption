@@ -6,41 +6,125 @@ import Foundation
 import ScreenCaptureKit
 import Speech
 
+/// A capture channel, plus the one pane that is fed by both of them: `auto` carries whichever
+/// channel AudioGate picked, and every line it shows says which channel that was.
 enum Source: String, CaseIterable {
     case mic
     case sys
-    case mixed
+    case auto
 }
 
 enum SourceMode: String {
     case mic
     case system
-    case both
+    case auto
 
+    /// `both` used to open one recognizer per channel in two side-by-side columns. The caption
+    /// window is single-pane now, so the retired value resolves to `auto` rather than failing a
+    /// config file or a habit that predates the change.
+    static func parse(_ value: String) -> SourceMode? {
+        value == "both" ? .auto : SourceMode(rawValue: value)
+    }
+
+    /// The channels to capture. `auto` records both and lets AudioGate pick between them.
     var sources: [Source] {
         switch self {
         case .mic: return [.mic]
         case .system: return [.sys]
-        case .both: return [.mic, .sys]
+        case .auto: return [.mic, .sys]
         }
+    }
+
+    /// The single pane the caption window shows for this mode.
+    var pane: Source {
+        switch self {
+        case .mic: return .mic
+        case .system: return .sys
+        case .auto: return .auto
+        }
+    }
+}
+
+/// How a caption names the channel it came from; also the tag auto's transcript lines carry.
+/// The `auto` pane is not a channel, so it contributes nothing of its own.
+func sourceLabel(_ source: Source) -> String {
+    switch source {
+    case .mic: return "(microphone) "
+    case .sys: return "(speaker) "
+    case .auto: return ""
     }
 }
 
 enum ASRMode: String {
     case apple
     case hf
+    case hfStream = "hf-stream"
     case sherpa
 }
 
+/// One entry of the caption bar's model dropdown: a backend plus, for Hugging Face, its model id.
+struct ASRChoice: Equatable {
+    let mode: ASRMode
+    let hfModel: String
+
+    init(mode: ASRMode, hfModel: String = "") {
+        self.mode = mode
+        self.hfModel = mode == .hf || mode == .hfStream ? hfModel : ""
+    }
+
+    var isHF: Bool { mode == .hf || mode == .hfStream }
+
+    var id: String { isHF ? "\(mode.rawValue):\(hfModel)" : mode.rawValue }
+
+    var menuTitle: String {
+        switch mode {
+        case .apple: return "Apple Speech"
+        case .sherpa: return "Sherpa-ONNX"
+        case .hf: return "\(hfModel) (chunked)"
+        case .hfStream: return "\(hfModel) (streaming)"
+        }
+    }
+
+    /// Short enough for the 108pt button; the full id stays in the tooltip and the menu.
+    var buttonTitle: String {
+        switch mode {
+        case .apple: return "Apple"
+        case .sherpa: return "Sherpa"
+        case .hf, .hfStream:
+            let name = hfModel.split(separator: "/").last.map(String.init) ?? "HF"
+            return name.count <= 16 ? name : String(name.prefix(15)) + "…"
+        }
+    }
+}
+
+/// Split one model spec into a path plus a model id.
+///
+/// A cache-aware checkpoint decoded in fixed blocks throws away the thing it was built for, and a
+/// plain seq2seq has no streaming state to keep, so the two never share a worker. `stream:` and
+/// `offline:` pick the path outright; otherwise the id does, since checkpoints that stream say so
+/// in their name (nvidia/nemotron-3.5-asr-streaming-0.6b).
+func hfChoice(_ spec: String) -> ASRChoice {
+    for (prefix, mode) in [("stream:", ASRMode.hfStream), ("offline:", ASRMode.hf)] where spec.hasPrefix(prefix) {
+        return ASRChoice(mode: mode,
+                         hfModel: String(spec.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces))
+    }
+    return ASRChoice(mode: spec.lowercased().contains("streaming") ? .hfStream : .hf, hfModel: spec)
+}
+
 struct Config {
-    var sourceMode: SourceMode = .mic
+    var sourceMode: SourceMode = .auto
     var asrMode: ASRMode = .apple
     var language = "zh-CN"
     var outputDir = "transcripts"
     var opacity: CGFloat = 0.75
     var height: CGFloat = 120
     var hfModel: String?
+    var hfModels: [String] = []
     var hfScript: String
+    var hfStreamScript: String
+    /// Streaming checkpoints need transformers >= 5.13, which qwen-asr (pinned at 4.57) refuses to
+    /// share, so the streaming worker may have to run out of a second environment.
+    var hfStreamPython = "python3"
     var sherpaScript: String
     var stopScript: String
     var debug = false
@@ -48,12 +132,29 @@ struct Config {
     var record = false
     var recordDir: String
 
-    var displaySources: [Source] {
-        if asrMode == .apple && sourceMode == .both { return [.mixed] }
-        return sourceMode == .both ? [.sys, .mic] : sourceMode.sources
+    /// The one pane the window shows. It never changes: the ASR model can be swapped mid-run
+    /// without the layout moving under the captions.
+    var pane: Source { sourceMode.pane }
+
+    var currentChoice: ASRChoice { ASRChoice(mode: asrMode, hfModel: hfModel ?? "") }
+
+    /// hfModels already leads with the startup model, prefixed by parseArgs so --asr keeps its say.
+    var choices: [ASRChoice] {
+        var list = [ASRChoice(mode: .apple), ASRChoice(mode: .sherpa)]
+        var seen = Set<String>()
+        for spec in hfModels {
+            let choice = hfChoice(spec)
+            if !choice.hfModel.isEmpty, seen.insert(choice.id).inserted { list.append(choice) }
+        }
+        return list
     }
 }
 
+/// Apple Speech needs a real locale, so the loose spellings collapse onto one.
+///
+/// # ponytail: applied where SFSpeechRecognizer is built, not at parse time -- config.language has
+/// to stay as typed for the Python workers, and "auto" means detect-per-utterance to a streaming
+/// checkpoint but has no such thing on Apple Speech.
 func localeID(_ language: String) -> String {
     switch language.lowercased() {
     case "zh", "cn", "chinese", "auto", "mixed", "zh+en", "en+zh":
@@ -71,6 +172,7 @@ func parseArgs() -> Config {
     var config = Config(
         outputDir: projectDir.appendingPathComponent("transcripts").path,
         hfScript: projectDir.appendingPathComponent("src/python/hf_asr_worker.py").path,
+        hfStreamScript: projectDir.appendingPathComponent("src/python/hf_stream_worker.py").path,
         sherpaScript: projectDir.appendingPathComponent("src/python/sherpa_asr_worker.py").path,
         stopScript: projectDir.appendingPathComponent("scripts/stop.sh").path,
         debugDir: projectDir.appendingPathComponent("debug-audio").path,
@@ -91,19 +193,19 @@ func parseArgs() -> Config {
 
         switch arg {
         case "--source":
-            guard let mode = SourceMode(rawValue: value()) else {
-                fputs("Use --source mic|system|both\n", stderr)
+            guard let mode = SourceMode.parse(value()) else {
+                fputs("Use --source mic|system|auto\n", stderr)
                 exit(2)
             }
             config.sourceMode = mode
         case "--asr":
             guard let mode = ASRMode(rawValue: value()) else {
-                fputs("Use --asr apple|hf|sherpa\n", stderr)
+                fputs("Use --asr apple|hf|hf-stream|sherpa\n", stderr)
                 exit(2)
             }
             config.asrMode = mode
         case "--language":
-            config.language = localeID(value())
+            config.language = value()
         case "--output-dir":
             config.outputDir = value()
         case "--opacity":
@@ -112,8 +214,17 @@ func parseArgs() -> Config {
             config.height = CGFloat(Double(value()) ?? 120)
         case "--hf-model":
             config.hfModel = value()
+        case "--hf-models":
+            config.hfModels = value()
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
         case "--hf-script":
             config.hfScript = value()
+        case "--hf-stream-script":
+            config.hfStreamScript = value()
+        case "--hf-stream-python":
+            config.hfStreamPython = value()
         case "--sherpa-script":
             config.sherpaScript = value()
         case "--debug":
@@ -125,10 +236,12 @@ func parseArgs() -> Config {
         case "--help", "-h":
             print("""
             Usage:
-              live-subtitle --source mic|system|both
+              live-subtitle --source mic|system|auto
               live-subtitle --asr apple --language zh-CN
               live-subtitle --asr hf --hf-model openai/whisper-small
+              live-subtitle --asr hf-stream --hf-model nvidia/nemotron-3.5-asr-streaming-0.6b
               live-subtitle --asr sherpa
+              live-subtitle --hf-models openai/whisper-small,stream:nvidia/nemotron-3.5-asr-streaming-0.6b
               live-subtitle --debug
               live-subtitle --record [--record-dir <dir>]
             """)
@@ -141,11 +254,17 @@ func parseArgs() -> Config {
 
     config.opacity = min(1, max(0.1, config.opacity))
     config.height = min(500, max(70, config.height))
-    config.language = localeID(config.language)
 
-    if config.asrMode == .hf && (config.hfModel ?? "").isEmpty {
-        fputs("--asr hf requires --hf-model <huggingface/model-id>\n", stderr)
+    let startup = ASRChoice(mode: config.asrMode, hfModel: config.hfModel ?? "")
+    if startup.isHF && startup.hfModel.isEmpty {
+        fputs("--asr \(config.asrMode.rawValue) requires --hf-model <huggingface/model-id>\n", stderr)
         exit(2)
+    }
+    // the startup model keeps the path --asr picked; the rest of the dropdown goes by its name
+    if startup.isHF {
+        config.hfModels.insert((startup.mode == .hfStream ? "stream:" : "offline:") + startup.hfModel, at: 0)
+    } else if let model = config.hfModel, !model.isEmpty {
+        config.hfModels.insert(model, at: 0)
     }
 
     return config
@@ -161,7 +280,12 @@ final class TranscriptWriter {
         try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
     }
 
-    func append(source: Source, text: String) {
+    /// One file per channel, except auto: that pane is a single conversation, so both channels
+    /// share the main file and `speaker` puts the channel's name at the head of every line.
+    ///
+    /// `language` is whatever the worker detected for this line -- only --asr hf-stream on
+    /// --language auto reports one, and it is what makes a bilingual meeting searchable later.
+    func append(source: Source, text: String, speaker: Source? = nil, language: String = "") {
         let today = Self.dateFormatter.string(from: Date())
         if dates[source] != today {
             handles[source]?.closeFile()
@@ -175,7 +299,9 @@ final class TranscriptWriter {
             dates[source] = today
         }
         let time = Self.timeFormatter.string(from: Date())
-        if let data = "[\(time)] \(text)\n".data(using: .utf8) {
+        let label = speaker.map(sourceLabel) ?? ""
+        let tag = language.isEmpty ? "" : "[\(language)] "
+        if let data = "[\(time)] \(label)\(tag)\(text)\n".data(using: .utf8) {
             handles[source]?.write(data)
         }
     }
@@ -406,33 +532,43 @@ final class SubtitleWindow {
     private static let controlBarHeight: CGFloat = 34
     private static let controlButtonWidth: CGFloat = 52
     private static let controlButtonHeight: CGFloat = 22
+    private static let modelButtonWidth: CGFloat = 108
     private static let dragHandleSize: CGFloat = 22
     private static let controlGap: CGFloat = 6
     private static let controlPadding: CGFloat = 6
     private static let collapsedWidth: CGFloat =
         controlPadding + dragHandleSize + controlGap
+        + modelButtonWidth + controlGap
         + controlButtonWidth + controlGap
         + controlButtonWidth + controlPadding
 
     private let window: NSWindow
     private let stopScript: String
-    private let sources: [Source]
-    private var textViews: [Source: CaptionTextView] = [:]
-    private var scrollViews: [Source: NSScrollView] = [:]
+    /// The pane this window shows. One caption region, fixed for the whole run.
+    private let pane: Source
+    private let textView = CaptionTextView()
+    private let scrollView = NSScrollView()
     private let dragHandle = DragHandleView(frame: .zero)
+    private let modelButton = NSButton(title: "", target: nil, action: nil)
     private let hideButton = NSButton(title: "Hide", target: nil, action: nil)
     private let quitButton = NSButton(title: "Quit", target: nil, action: nil)
+    private var choices: [ASRChoice] = []
+    private var currentChoice: ASRChoice?
+    /// Called on the main thread when the user picks another entry in the model dropdown.
+    var onSelectChoice: ((ASRChoice) -> Void)?
     private var stopProcess: Process?
     private var expandedSize: NSSize
     private var collapsed = false
-    private var lineStarts: [Source: Int] = [:]
-    private var debugPrefixes: [Source: String] = [:]
-    private var liveTexts: [Source: String] = [:]
-    private var liveColors: [Source: NSColor] = [:]
+    private var lineStart = 0
+    private var debugPrefix = ""
+    private var liveText: String?
+    private var liveColor = NSColor.white
+    /// Channel the pane is currently showing; only the auto pane ever has one.
+    private var speaker: Source?
 
     init(config: Config) {
         stopScript = config.stopScript
-        sources = config.displaySources
+        pane = config.pane
         let screen = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         let rect = NSRect(x: screen.minX, y: screen.minY, width: screen.width, height: config.height)
         expandedSize = rect.size
@@ -454,23 +590,27 @@ final class SubtitleWindow {
 
         if let content = window.contentView {
             addControls(to: content)
-            let frame = textFrame(in: content.bounds)
-            if sources.count == 2 {
-                let gap: CGFloat = 8
-                let width = (frame.width - gap) / 2
-                addRegion(source: .sys, frame: NSRect(x: frame.minX, y: frame.minY, width: width, height: frame.height), to: content)
-                addRegion(source: .mic, frame: NSRect(x: frame.minX + width + gap, y: frame.minY, width: width, height: frame.height), to: content)
-            } else if let source = sources.first {
-                addRegion(source: source, frame: frame, to: content)
-            }
+            addRegion(to: content)
+            relayoutTextRegions()
         }
+        setChoices(config.choices, current: config.currentChoice)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func setChoices(_ choices: [ASRChoice], current: ASRChoice) {
+        self.choices = choices
+        setCurrentChoice(current)
+    }
+
+    func setCurrentChoice(_ choice: ASRChoice) {
+        currentChoice = choice
+        setButtonTitle(modelButton, choice.buttonTitle)
+        modelButton.toolTip = "ASR model: \(choice.menuTitle)"
     }
 
     func toggleVisibility() {
         collapsed.toggle()
         setButtonTitle(hideButton, collapsed ? "Show" : "Hide")
-        scrollViews.values.forEach { $0.isHidden = collapsed }
         if collapsed {
             expandedSize = window.frame.size
             let pillOrigin = NSPoint(
@@ -495,48 +635,49 @@ final class SubtitleWindow {
             )
             origin = DragHandleView.clampedOrigin(origin, size: expandedSize)
             window.setFrame(NSRect(origin: origin, size: expandedSize), display: true, animate: false)
-            relayoutTextRegions()
         }
+        relayoutTextRegions()
         if let content = window.contentView {
             layoutControls(in: content.bounds)
         }
     }
 
-    func setStatus(_ text: String, source: Source) {
-        replaceLine("\(prefix(source))\(text)", color: NSColor.systemYellow, source: source)
-        lineStarts[source] = textViews[source]?.textStorage?.length ?? 0
+    /// A status belongs to the pane rather than to any one channel, so it stays unprefixed on auto.
+    func setStatus(_ text: String, color: NSColor = .systemYellow) {
+        replaceLine("\(sourceLabel(pane))\(text)", color: color)
+        lineStart = textView.textStorage?.length ?? 0
     }
 
-    func update(_ text: String, source: Source, final: Bool) {
-        liveTexts[source] = text
-        let color = final ? NSColor.white : NSColor(white: 0.72, alpha: 1)
-        liveColors[source] = color
-        replaceLine("\(debugPrefixes[source] ?? prefix(source))\(text)\(final ? "\n" : "")", color: color, source: source)
+    func update(_ text: String, final: Bool, speaker: Source? = nil) {
+        if let speaker { self.speaker = speaker }  // --source auto: one pane, two channels
+        liveText = text
+        liveColor = final ? NSColor.white : NSColor(white: 0.72, alpha: 1)
+        replaceLine("\(linePrefix())\(text)\(final ? "\n" : "")", color: liveColor)
         if final {
-            lineStarts[source] = textViews[source]?.textStorage?.length ?? 0
-            liveTexts[source] = nil
-            liveColors[source] = nil
+            lineStart = textView.textStorage?.length ?? 0
+            liveText = nil
         }
     }
 
-    func showDebug(levels: [Source: Float], sources: [Source]) {
-        for source in sources {
-            let debugPrefix = "\(prefix(source))\(formatLevel(levels[source]))  "
-            debugPrefixes[source] = debugPrefix
-            if let liveText = liveTexts[source] {
-                replaceLine("\(debugPrefix)\(liveText)", color: liveColors[source] ?? .white, source: source)
-            } else {
-                replaceLine(debugPrefix, color: NSColor.systemGreen, source: source)
-            }
+    /// Point the auto pane at the channel the gate is on, so the level meter names it even during
+    /// a silence that has produced no caption yet.
+    func setAutoSpeaker(_ speaker: Source) {
+        self.speaker = speaker
+    }
+
+    func showDebug(level: Float?) {
+        debugPrefix = "\(formatLevel(level))  "
+        if let liveText {
+            replaceLine("\(linePrefix())\(liveText)", color: liveColor)
+        } else {
+            replaceLine(linePrefix(), color: NSColor.systemGreen)
         }
     }
 
-    private func prefix(_ source: Source) -> String {
-        switch source {
-        case .mic: return "(microphone) "
-        case .sys: return "(speaker) "
-        case .mixed: return "(meeting) "
-        }
+    /// Who a caption came from, plus the level meter when --debug is on. On the auto pane the name
+    /// is the gated channel's, not the pane's.
+    private func linePrefix() -> String {
+        "\(sourceLabel(speaker ?? pane))\(debugPrefix)"
     }
 
     private func formatLevel(_ level: Float?) -> String {
@@ -544,15 +685,14 @@ final class SubtitleWindow {
         return String(format: "%.1f dB", level)
     }
 
-    private func addRegion(source: Source, frame: NSRect, to content: NSView) {
-        let scrollView = NSScrollView()
-        let textView = CaptionTextView()
+    private func addRegion(to content: NSView) {
+        let frame = textFrame(in: content.bounds)
         scrollView.frame = frame
         scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
-        scrollView.autoresizingMask = sources.count == 1 ? [.width, .height] : [.height]
+        scrollView.autoresizingMask = [.width, .height]
         scrollView.verticalScrollElasticity = .allowed
 
         textView.frame = NSRect(x: 0, y: 0, width: frame.width, height: frame.height)
@@ -571,20 +711,21 @@ final class SubtitleWindow {
         textView.textContainer?.containerSize = NSSize(width: frame.width, height: CGFloat.greatestFiniteMagnitude)
         scrollView.documentView = textView
         content.addSubview(scrollView)
-        scrollViews[source] = scrollView
-        textViews[source] = textView
-        lineStarts[source] = 0
     }
 
     private func addControls(to content: NSView) {
+        modelButton.target = self
+        modelButton.action = #selector(modelClicked)
         hideButton.target = self
         hideButton.action = #selector(toggleClicked)
         quitButton.target = self
         quitButton.action = #selector(quitClicked)
+        styleButton(modelButton, title: "", background: NSColor(calibratedRed: 0.22, green: 0.24, blue: 0.29, alpha: 1))
         styleButton(hideButton, title: "Hide", background: NSColor(calibratedRed: 0.10, green: 0.34, blue: 0.50, alpha: 1))
         styleButton(quitButton, title: "Quit", background: NSColor(calibratedRed: 0.62, green: 0.12, blue: 0.15, alpha: 1))
         dragHandle.autoresizingMask = [.minXMargin, .maxYMargin]
         content.addSubview(dragHandle)
+        content.addSubview(modelButton)
         content.addSubview(hideButton)
         content.addSubview(quitButton)
         layoutControls(in: content.bounds)
@@ -594,9 +735,11 @@ final class SubtitleWindow {
         let y = bounds.minY + Self.controlPadding
         let quitX = bounds.maxX - Self.controlPadding - Self.controlButtonWidth
         let hideX = quitX - Self.controlGap - Self.controlButtonWidth
-        let dragX = hideX - Self.controlGap - Self.dragHandleSize
+        let modelX = hideX - Self.controlGap - Self.modelButtonWidth
+        let dragX = modelX - Self.controlGap - Self.dragHandleSize
         quitButton.frame = NSRect(x: quitX, y: y, width: Self.controlButtonWidth, height: Self.controlButtonHeight)
         hideButton.frame = NSRect(x: hideX, y: y, width: Self.controlButtonWidth, height: Self.controlButtonHeight)
+        modelButton.frame = NSRect(x: modelX, y: y, width: Self.modelButtonWidth, height: Self.controlButtonHeight)
         dragHandle.frame = NSRect(x: dragX, y: y, width: Self.dragHandleSize, height: Self.dragHandleSize)
     }
 
@@ -611,15 +754,8 @@ final class SubtitleWindow {
 
     private func relayoutTextRegions() {
         guard let content = window.contentView else { return }
-        let frame = textFrame(in: content.bounds)
-        if sources.count == 2 {
-            let gap: CGFloat = 8
-            let width = (frame.width - gap) / 2
-            scrollViews[.sys]?.frame = NSRect(x: frame.minX, y: frame.minY, width: width, height: frame.height)
-            scrollViews[.mic]?.frame = NSRect(x: frame.minX + width + gap, y: frame.minY, width: width, height: frame.height)
-        } else if let source = sources.first {
-            scrollViews[source]?.frame = frame
-        }
+        scrollView.isHidden = collapsed
+        scrollView.frame = textFrame(in: content.bounds)
     }
 
     private func styleButton(_ button: NSButton, title: String, background: NSColor) {
@@ -632,11 +768,15 @@ final class SubtitleWindow {
     }
 
     private func setButtonTitle(_ button: NSButton, _ title: String) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingTail
         button.attributedTitle = NSAttributedString(
             string: title,
             attributes: [
                 .foregroundColor: NSColor.white,
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold)
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                .paragraphStyle: paragraph
             ]
         )
     }
@@ -645,10 +785,28 @@ final class SubtitleWindow {
         toggleVisibility()
     }
 
-    @objc private func quitClicked() {
-        sources.forEach {
-            replaceLine("Stopping LiveCaption... result: logs/subtitle-stop.log\n", color: NSColor.systemOrange, source: $0)
+    @objc private func modelClicked() {
+        let menu = NSMenu()
+        for choice in choices {
+            let item = NSMenuItem(title: choice.menuTitle, action: #selector(modelPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.id
+            item.state = choice.id == currentChoice?.id ? .on : .off
+            menu.addItem(item)
         }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: modelButton.bounds.maxY + 4), in: modelButton)
+    }
+
+    @objc private func modelPicked(_ sender: NSMenuItem) {
+        guard
+            let id = sender.representedObject as? String,
+            let choice = choices.first(where: { $0.id == id })
+        else { return }
+        onSelectChoice?(choice)
+    }
+
+    @objc private func quitClicked() {
+        replaceLine("Stopping LiveCaption... result: logs/subtitle-stop.log\n", color: NSColor.systemOrange)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [stopScript]
@@ -656,9 +814,8 @@ final class SubtitleWindow {
             DispatchQueue.main.async {
                 guard let self else { return }
                 let status = process.terminationStatus
-                self.sources.forEach {
-                    self.replaceLine("stop.sh finished with exit \(status). See logs/subtitle-stop.log\n", color: status == 0 ? NSColor.systemGreen : NSColor.systemRed, source: $0)
-                }
+                self.replaceLine("stop.sh finished with exit \(status). See logs/subtitle-stop.log\n",
+                                 color: status == 0 ? NSColor.systemGreen : NSColor.systemRed)
                 self.stopProcess = nil
             }
         }
@@ -667,30 +824,26 @@ final class SubtitleWindow {
             try process.run()
         } catch {
             stopProcess = nil
-            sources.forEach {
-                replaceLine("Could not start stop.sh: \(error.localizedDescription)\n", color: NSColor.systemRed, source: $0)
-            }
+            replaceLine("Could not start stop.sh: \(error.localizedDescription)\n", color: NSColor.systemRed)
             NSApp.terminate(nil)
         }
     }
 
-    private func replaceLine(_ text: String, color: NSColor, source: Source) {
-        guard let textView = textViews[source], let storage = textView.textStorage else { return }
-        let shouldFollow = isNearBottom(source: source)
+    private func replaceLine(_ text: String, color: NSColor) {
+        guard let storage = textView.textStorage else { return }
+        let shouldFollow = isNearBottom()
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
             .foregroundColor: color
         ]
         let attributed = NSAttributedString(string: text, attributes: attrs)
-        let lineStart = lineStarts[source] ?? 0
         storage.replaceCharacters(in: NSRange(location: lineStart, length: storage.length - lineStart), with: attributed)
         if shouldFollow {
             textView.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
         }
     }
 
-    private func isNearBottom(source: Source) -> Bool {
-        guard let scrollView = scrollViews[source], let textView = textViews[source] else { return true }
+    private func isNearBottom() -> Bool {
         let visible = scrollView.contentView.bounds
         let documentHeight = textView.bounds.height
         return documentHeight - visible.maxY < 24
@@ -701,14 +854,14 @@ final class AppleASR {
     private static let sessionDuration: TimeInterval = 50
     private let source: Source
     private let recognizer: SFSpeechRecognizer
-    private let onText: (Source, String, Bool) -> Void
+    private let onText: (Source, String, Bool, String) -> Void
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var lastText = ""
     private var sessionID = 0
     private let lock = NSLock()
 
-    init(source: Source, language: String, onText: @escaping (Source, String, Bool) -> Void) throws {
+    init(source: Source, language: String, onText: @escaping (Source, String, Bool, String) -> Void) throws {
         self.source = source
         self.onText = onText
         let locale = Locale(identifier: language)
@@ -728,6 +881,18 @@ final class AppleASR {
     func append(_ sampleBuffer: CMSampleBuffer) {
         lock.lock()
         request?.appendAudioSampleBuffer(sampleBuffer)
+        lock.unlock()
+    }
+
+    /// End the session for good. Bumping sessionID also disarms the pending rotation timer.
+    func stop() {
+        lock.lock()
+        sessionID += 1
+        task?.cancel()
+        request?.endAudio()
+        task = nil
+        request = nil
+        lastText = ""
         lock.unlock()
     }
 
@@ -775,7 +940,7 @@ final class AppleASR {
         }
         lock.unlock()
         if shouldEmit {
-            onText(source, text, result.isFinal)
+            onText(source, text, result.isFinal, "")
         }
         if result.isFinal {
             restart(sessionID: sessionID, commitPartial: false)
@@ -796,7 +961,7 @@ final class AppleASR {
         request = nil
         lock.unlock()
         if !partial.isEmpty {
-            onText(source, partial, true)
+            onText(source, partial, true, "")
         }
         fputs("Apple Speech session rotated (\(source.rawValue))\n", stderr)
         if delay > 0 {
@@ -810,18 +975,42 @@ final class AppleASR {
 }
 
 final class SubprocessASR {
+    // ponytail: a busy worker stops reading stdin during inference, so writes must not run on the
+    // audio thread -- they queue here and are dropped once the worker is a few seconds behind.
+    private static let maxQueuedBytes = 4 * 1024 * 1024
+
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
-    private let onText: (Source, String, Bool) -> Void
+    private let onText: (Source, String, Bool, String) -> Void
+    private let onReady: (String) -> Void
+    private let onExit: (Int32) -> Void
+    private let writeQueue = DispatchQueue(label: "LiveCaption.asr-stdin")
+    private let lock = NSLock()
     private var stdoutBuffer = ""
+    private var queuedBytes = 0
+    private var closed = false
 
-    convenience init(script: String, arguments: [String] = [], onText: @escaping (Source, String, Bool) -> Void) throws {
-        try self.init(command: ["/usr/bin/env", "python3", script] + arguments, onText: onText)
+    convenience init(
+        script: String,
+        arguments: [String] = [],
+        python: String = "python3",
+        onText: @escaping (Source, String, Bool, String) -> Void,
+        onReady: @escaping (String) -> Void,
+        onExit: @escaping (Int32) -> Void
+    ) throws {
+        try self.init(command: ["/usr/bin/env", python, script] + arguments, onText: onText, onReady: onReady, onExit: onExit)
     }
 
-    init(command: [String], onText: @escaping (Source, String, Bool) -> Void) throws {
+    init(
+        command: [String],
+        onText: @escaping (Source, String, Bool, String) -> Void,
+        onReady: @escaping (String) -> Void,
+        onExit: @escaping (Int32) -> Void
+    ) throws {
         self.onText = onText
+        self.onReady = onReady
+        self.onExit = onExit
         process.executableURL = URL(fileURLWithPath: command[0])
         process.arguments = Array(command.dropFirst())
         process.standardInput = input
@@ -831,11 +1020,31 @@ final class SubprocessASR {
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             self?.consume(handle.availableData)
         }
+        process.terminationHandler = { [weak self] process in
+            guard let self else { return }
+            self.lock.lock()
+            let expected = self.closed
+            self.lock.unlock()
+            // a shutdown() we asked for is not worth reporting; a crash or a missing dep is
+            guard !expected else { return }
+            self.onExit(process.terminationStatus)
+        }
         try process.run()
     }
 
     deinit {
+        shutdown()
+    }
+
+    /// Stop feeding and kill the worker. Safe to call while audio threads are still sending.
+    func shutdown() {
+        lock.lock()
+        let alreadyClosed = closed
+        closed = true
+        lock.unlock()
+        guard !alreadyClosed else { return }
         output.fileHandleForReading.readabilityHandler = nil
+        try? input.fileHandleForWriting.close()
         if process.isRunning {
             process.terminate()
         }
@@ -856,11 +1065,33 @@ final class SubprocessASR {
             var line = String(data: json, encoding: .utf8)
         else { return }
         line.append("\n")
-        input.fileHandleForWriting.write(Data(line.utf8))
+        let bytes = Data(line.utf8)
+
+        lock.lock()
+        guard !closed, queuedBytes + bytes.count <= Self.maxQueuedBytes else {
+            lock.unlock()
+            return
+        }
+        queuedBytes += bytes.count
+        lock.unlock()
+
+        writeQueue.async { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let stopped = self.closed
+            self.queuedBytes -= bytes.count
+            self.lock.unlock()
+            guard !stopped else { return }
+            try? self.input.fileHandleForWriting.write(contentsOf: bytes)
+        }
     }
 
     private func consume(_ data: Data) {
-        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+        guard !data.isEmpty else {
+            output.fileHandleForReading.readabilityHandler = nil
+            return
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return }
         stdoutBuffer.append(text)
         let parts = stdoutBuffer.split(separator: "\n", omittingEmptySubsequences: false)
         stdoutBuffer = parts.last.map(String.init) ?? ""
@@ -868,13 +1099,19 @@ final class SubprocessASR {
             if line.isEmpty { continue }
             guard
                 let jsonData = line.data(using: .utf8),
-                let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+            else { continue }
+            if obj["status"] as? String == "ready" {
+                onReady(obj["device"] as? String ?? "")
+                continue
+            }
+            guard
                 let sourceRaw = obj["source"] as? String,
                 let source = Source(rawValue: sourceRaw),
                 let transcript = obj["text"] as? String
             else { continue }
             let final = obj["final"] as? Bool ?? true
-            onText(source, transcript, final)
+            onText(source, transcript, final, obj["language"] as? String ?? "")
         }
     }
 }
@@ -963,13 +1200,28 @@ final class SystemCapture: NSObject, SCStreamOutput {
     }
 }
 
-final class MixedAudioGate {
+/// Keeps whichever channel is talking and drops the other one, resampled to 16 kHz.
+///
+/// The speaker wins while it has voice and the microphone gets the rest: in a meeting the far end
+/// is the side you cannot ask to repeat itself, and your own voice is the one you already heard.
+/// The hangover stops a pause inside a sentence from handing the channel back and forth mid-word.
+/// Only `--source auto` uses it, on every backend; the caption it produces carries the name of
+/// whichever channel won.
+final class AudioGate {
     private let targetRate = 16_000.0
     private let systemVoiceThreshold: Float = -45
     private let systemHangover: TimeInterval = 0.6
     private let lock = NSLock()
     private var lastSystemVoice = Date.distantPast
     private var resamplePositions: [Source: Double] = [:]
+    private var current: Source = .mic
+
+    /// The channel the last processed frame belonged to; drives the caption prefix under auto.
+    var selected: Source {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
 
     func process(source: Source, sampleRate: Double, floats: [Float]) -> [Float]? {
         guard !floats.isEmpty, sampleRate > 0 else { return nil }
@@ -980,8 +1232,8 @@ final class MixedAudioGate {
         if source == .sys && rmsDB(floats) >= systemVoiceThreshold {
             lastSystemVoice = now
         }
-        let selected: Source = now.timeIntervalSince(lastSystemVoice) <= systemHangover ? .sys : .mic
-        guard source == selected else { return nil }
+        current = now.timeIntervalSince(lastSystemVoice) <= systemHangover ? .sys : .mic
+        guard source == current else { return nil }
         return resample(source: source, sampleRate: sampleRate, floats: floats)
     }
 
@@ -1004,21 +1256,32 @@ final class MixedAudioGate {
 }
 
 final class AppController: NSObject, NSApplicationDelegate {
-    private let config: Config
+    private var config: Config
+    // config is mutated on the main thread when the model changes; audio threads read these copies
+    private let sourceMode: SourceMode
+    private let debugEnabled: Bool
     private let writer: TranscriptWriter
     private let debugRecorder: DebugRecorder?
     private var subtitle: SubtitleWindow?
-    private var appleASR: [Source: AppleASR] = [:]
+    // audio threads read these while the main thread swaps models, so both go through asrLock
+    private let asrLock = NSLock()
+    private var appleASR: AppleASR?
     private var pythonASR: SubprocessASR?
-    private let mixedAudioGate = MixedAudioGate()
+    private var asrGeneration = 0
+    private let audioGate = AudioGate()
     private var micCapture: MicCapture?
     private var systemCapture: SystemCapture?
-    private var debugLevels: [Source: Float] = [:]
-    private var pendingTexts: [Source: String] = [:]
+    private var debugLevel: Float?
+    /// The unfinished line, flushed to the transcript on quit.
+    private var pendingText: (text: String, speaker: Source?, language: String)?
+    /// Channel the auto pane's unfinished line was credited to; main thread only.
+    private var utteranceSource: Source?
     private var lastDebugDraw = Date.distantPast
 
     init(config: Config) {
         self.config = config
+        self.sourceMode = config.sourceMode
+        self.debugEnabled = config.debug
         self.writer = TranscriptWriter(path: config.outputDir)
         // ponytail: --record reuses the debug WAV recorder, just without the level overlay
         self.debugRecorder = config.debug
@@ -1028,10 +1291,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         subtitle = SubtitleWindow(config: config)
+        subtitle?.onSelectChoice = { [weak self] choice in self?.switchTo(choice) }
         if config.debug {
-            subtitle?.showDebug(levels: debugLevels, sources: config.displaySources)
+            subtitle?.showDebug(level: debugLevel)
         } else {
-            config.displaySources.forEach { subtitle?.setStatus("Listening...\n", source: $0) }
+            subtitle?.setStatus("Listening...\n")
         }
         NSApp.activate(ignoringOtherApps: true)
         requestPermissionsThenStart()
@@ -1052,7 +1316,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func requestPermissionsThenStart() {
-        requestSpeechPermissionIfNeeded { [weak self] speechOK in
+        requestSpeechPermission(needed: config.asrMode == .apple) { [weak self] speechOK in
             guard let self else { return }
             guard speechOK else {
                 self.showPermissionAlert(
@@ -1076,8 +1340,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func requestSpeechPermissionIfNeeded(_ completion: @escaping (Bool) -> Void) {
-        guard config.asrMode == .apple else {
+    private func requestSpeechPermission(needed: Bool, _ completion: @escaping (Bool) -> Void) {
+        guard needed else {
             completion(true)
             return
         }
@@ -1116,9 +1380,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func showPermissionAlert(title: String, message: String, settingsURL: String?) {
         DispatchQueue.main.async {
-            if let source = self.config.displaySources.first {
-                self.subtitle?.setStatus("\(title)\n", source: source)
-            }
+            self.subtitle?.setStatus("\(title)\n")
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()
             alert.messageText = title
@@ -1136,81 +1398,215 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func setupASR() throws {
+        let generation = asrGeneration
+        let choice = config.currentChoice
         switch config.asrMode {
         case .apple:
-            for source in config.displaySources {
-                appleASR[source] = try AppleASR(source: source, language: config.language, onText: handleText)
+            // one pane, so one realtime task -- under --source auto the gate has already picked
+            // which channel reaches it
+            let built = try AppleASR(source: config.pane, language: localeID(config.language),
+                                     onText: handleText)
+            asrLock.lock()
+            appleASR = built
+            asrLock.unlock()
+        case .hf, .hfStream, .sherpa:
+            let onReady: (String) -> Void = { [weak self] device in
+                self?.onMain(generation) {
+                    $0.report("\(choice.menuTitle) ready\(device.isEmpty ? "" : " (\(device))")", color: .systemGreen)
+                }
             }
-        case .hf:
-            pythonASR = try SubprocessASR(script: config.hfScript, arguments: ["--hf-model", config.hfModel ?? ""], onText: handleText)
-        case .sherpa:
-            pythonASR = try SubprocessASR(script: config.sherpaScript, onText: handleText)
+            let onExit: (Int32) -> Void = { [weak self] status in
+                self?.onMain(generation) {
+                    $0.asrLock.lock()
+                    $0.pythonASR = nil
+                    $0.asrLock.unlock()
+                    $0.report("\(choice.menuTitle) stopped (exit \(status)) — pick another model", color: .systemRed)
+                }
+            }
+            let worker: SubprocessASR
+            switch config.asrMode {
+            case .hf:
+                worker = try SubprocessASR(script: config.hfScript,
+                                           arguments: ["--hf-model", config.hfModel ?? ""],
+                                           onText: handleText, onReady: onReady, onExit: onExit)
+            case .hfStream:
+                worker = try SubprocessASR(script: config.hfStreamScript,
+                                           arguments: ["--hf-model", config.hfModel ?? "",
+                                                       "--language", config.language],
+                                           python: config.hfStreamPython,
+                                           onText: handleText, onReady: onReady, onExit: onExit)
+            default:
+                worker = try SubprocessASR(script: config.sherpaScript,
+                                           onText: handleText, onReady: onReady, onExit: onExit)
+            }
+            asrLock.lock()
+            pythonASR = worker
+            asrLock.unlock()
         }
     }
 
+    /// Run `body` on the main thread, but only while `generation` is still the live model.
+    private func onMain(_ generation: Int, _ body: @escaping (AppController) -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, generation == self.asrGeneration else { return }
+            body(self)
+        }
+    }
+
+    private func stopASR() {
+        utteranceSource = nil  // the next model opens its own lines; do not credit them to the old
+        asrLock.lock()
+        asrGeneration += 1
+        let apple = appleASR
+        let python = pythonASR
+        appleASR = nil
+        pythonASR = nil
+        asrLock.unlock()
+        apple?.stop()
+        python?.shutdown()
+    }
+
+    private func switchTo(_ choice: ASRChoice) {
+        guard choice != config.currentChoice else { return }
+        // Apple Speech may never have been authorised if the run started on a Python worker
+        requestSpeechPermission(needed: choice.mode == .apple) { [weak self] speechOK in
+            guard let self else { return }
+            guard speechOK else {
+                self.subtitle?.setCurrentChoice(self.config.currentChoice)
+                self.report("Speech Recognition permission denied — staying on \(self.config.currentChoice.menuTitle)",
+                            color: .systemRed)
+                return
+            }
+            self.applyChoice(choice)
+        }
+    }
+
+    private func applyChoice(_ choice: ASRChoice) {
+        stopASR()
+        config.asrMode = choice.mode
+        if choice.isHF {
+            config.hfModel = choice.hfModel
+        }
+        subtitle?.setCurrentChoice(choice)
+        report("Switching to \(choice.menuTitle)...", color: .systemYellow)
+        do {
+            try setupASR()
+            if choice.mode == .apple {
+                report("\(choice.menuTitle) ready", color: .systemGreen)
+            }
+        } catch {
+            report("Could not start \(choice.menuTitle): \(error.localizedDescription)", color: .systemRed)
+        }
+    }
+
+    /// Status line in the caption pane -- a failed model switch must not kill the app the way
+    /// showPermissionAlert() does, the user still has the dropdown to pick something that works.
+    private func report(_ text: String, color: NSColor) {
+        subtitle?.setStatus("\(text)\n", color: color)
+    }
+
     private func startAudio() throws {
-        let needsFloats = config.asrMode != .apple || config.debug || config.record || config.sourceMode == .both
-        let onFloats: ((Source, Double, [Float]) -> Void)? = needsFloats ? { [weak self] source, rate, floats in
+        // ponytail: the model can change mid-run, so both callbacks stay installed the whole time
+        let onFloats: (Source, Double, [Float]) -> Void = { [weak self] source, rate, floats in
             self?.handleFloats(source: source, sampleRate: rate, floats: floats)
-        } : nil
+        }
+
+        // ponytail: single-channel modes hand Apple Speech the capture buffer untouched; under
+        // --source auto everything goes through handleFloats instead, so the gate can pick first.
+        let onPCM: (Source, AVAudioPCMBuffer) -> Void = { [weak self] _, buffer in
+            guard let self, self.sourceMode != .auto else { return }
+            self.apple()?.append(buffer)
+        }
+        let onSampleBuffer: (Source, CMSampleBuffer) -> Void = { [weak self] _, buffer in
+            guard let self, self.sourceMode != .auto else { return }
+            self.apple()?.append(buffer)
+        }
 
         if config.sourceMode.sources.contains(.mic) {
-            micCapture = MicCapture(
-                onPCM: { [weak self] source, buffer in self?.appleASR[source]?.append(buffer) },
-                onFloats: onFloats
-            )
+            micCapture = MicCapture(onPCM: onPCM, onFloats: onFloats)
             try micCapture?.start()
         }
         if config.sourceMode.sources.contains(.sys) {
-            systemCapture = SystemCapture(
-                onSampleBuffer: { [weak self] source, buffer in self?.appleASR[source]?.append(buffer) },
-                onFloats: onFloats
-            )
+            systemCapture = SystemCapture(onSampleBuffer: onSampleBuffer, onFloats: onFloats)
             systemCapture?.start()
         }
     }
 
+    private func apple() -> AppleASR? {
+        asrLock.lock()
+        defer { asrLock.unlock() }
+        return appleASR
+    }
+
     private func handleFloats(source: Source, sampleRate: Double, floats: [Float]) {
-        var mixedLevel: Float?
-        if config.asrMode != .apple {
-            pythonASR?.send(source: source, sampleRate: sampleRate, floats: floats)
-        } else if config.sourceMode == .both,
-                  let selected = mixedAudioGate.process(source: source, sampleRate: sampleRate, floats: floats),
-                  let buffer = pcmBuffer(sampleRate: 16_000, floats: selected) {
-            appleASR[.mixed]?.append(buffer)
-            mixedLevel = rmsDB(selected)
+        asrLock.lock()
+        let python = pythonASR
+        let apple = appleASR
+        asrLock.unlock()
+
+        let gating = sourceMode == .auto
+        var gatedLevel: Float?
+        if gating {
+            // ponytail: the winning channel reaches the recognizer under one .auto label so the
+            // stream never breaks. Forwarding it as mic/sys instead would starve whichever side is
+            // quiet, and a streaming recognizer needs that silence to finish its sentence.
+            if let gated = audioGate.process(source: source, sampleRate: sampleRate, floats: floats) {
+                python?.send(source: .auto, sampleRate: 16_000, floats: gated)
+                if python == nil, let apple, let buffer = pcmBuffer(sampleRate: 16_000, floats: gated) {
+                    apple.append(buffer)
+                }
+                gatedLevel = rmsDB(gated)
+            }
+        } else if let python {
+            python.send(source: source, sampleRate: sampleRate, floats: floats)
         }
 
         guard let debugRecorder else { return }
         let level = debugRecorder.record(source: source, sampleRate: sampleRate, floats: floats)
-        guard config.debug else { return }
+        guard debugEnabled else { return }
         DispatchQueue.main.async {
-            if let mixedLevel {
-                self.debugLevels[.mixed] = mixedLevel
-            } else if self.config.displaySources != [.mixed] {
-                self.debugLevels[source] = level
+            if gating {
+                guard let gatedLevel else { return }  // the muted channel has no meter of its own
+                self.debugLevel = gatedLevel
+                self.subtitle?.setAutoSpeaker(self.audioGate.selected)
+            } else {
+                self.debugLevel = level
             }
             let now = Date()
             guard now.timeIntervalSince(self.lastDebugDraw) >= 0.15 else { return }
             self.lastDebugDraw = now
-            self.subtitle?.showDebug(levels: self.debugLevels, sources: self.config.displaySources)
+            self.subtitle?.showDebug(level: self.debugLevel)
         }
     }
 
-    private func handleText(source: Source, text: String, final: Bool) {
+    private func handleText(source: Source, text: String, final: Bool, language: String) {
+        let heard = source == .auto ? audioGate.selected : source
         DispatchQueue.main.async {
-            self.subtitle?.update(text, source: source, final: final)
+            // ponytail: a line's channel is locked when it opens, not re-read as it grows -- the
+            // gate can hand over mid-sentence, and relabelling half a caption reads worse than
+            // crediting all of it to whoever started talking.
+            var speaker: Source?
+            if source == .auto {
+                speaker = self.utteranceSource ?? heard
+                self.utteranceSource = final ? nil : speaker
+            }
+            // ponytail: the detected language goes to the transcript only. The captions already
+            // read as one language or the other, and the pane has enough prefixes on it.
+            self.subtitle?.update(text, final: final, speaker: speaker)
             if final {
-                self.writer.append(source: source, text: text)
-                self.pendingTexts[source] = nil
+                self.writer.append(source: source, text: text, speaker: speaker, language: language)
+                self.pendingText = nil
             } else {
-                self.pendingTexts[source] = text
+                self.pendingText = (text, speaker, language)
             }
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        pendingTexts.forEach { writer.append(source: $0.key, text: $0.value) }
+        if let pendingText {
+            writer.append(source: config.pane, text: pendingText.text, speaker: pendingText.speaker,
+                          language: pendingText.language)
+        }
         writer.close()
         debugRecorder?.close()
     }
@@ -1340,6 +1736,9 @@ func pcmBuffer(sampleRate: Double, floats: [Float]) -> AVAudioPCMBuffer? {
 
 var terminationSignals: [DispatchSourceSignal] = []
 func installTerminationHandlers() {
+    // ponytail: swapping models kills the worker while audio threads may still be mid-write --
+    // without this the resulting SIGPIPE would take the whole app down
+    signal(SIGPIPE, SIG_IGN)
     for sig in [SIGTERM, SIGINT] {
         signal(sig, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)

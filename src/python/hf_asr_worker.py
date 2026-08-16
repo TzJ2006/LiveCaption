@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Hugging Face ASR worker using NDJSON over standard input and output.
+"""Offline Hugging Face ASR worker using NDJSON over standard input and output.
+
+Buffers --chunk-seconds of audio and runs each block through pipeline() as a self-contained clip,
+so every caption is final. Cache-aware streaming checkpoints belong on hf_stream_worker.py, which
+keeps one recognition alive across chunks instead.
 
 Input:
   {"type":"audio","source":"mic","sampleRate":16000,"pcmFloat32":"..."}
@@ -10,8 +14,18 @@ Output:
 import argparse
 import base64
 import json
+import os
+import pathlib
 import sys
 from collections import defaultdict
+
+# ponytail: keep downloaded weights inside LiveCaption (models/ is gitignored) instead of
+# ~/.cache/huggingface. This has to run before transformers/huggingface_hub are imported --
+# they read HF_HOME once, at import time. An HF_HOME already in the environment still wins.
+HF_CACHE = pathlib.Path(__file__).resolve().parents[2] / "models" / "hf"
+if not os.environ.get("HF_HOME"):
+    os.environ["HF_HOME"] = str(HF_CACHE)
+    HF_CACHE.mkdir(parents=True, exist_ok=True)
 
 import numpy as np
 
@@ -20,19 +34,43 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hf-model", required=True)
     parser.add_argument("--chunk-seconds", type=float, default=3.0)
+    parser.add_argument("--device", default="auto",
+                        help="auto picks cuda, then mps (Apple Silicon), then cpu; pass one to pin it")
     return parser.parse_args()
+
+
+def pick_device(preference):
+    """CUDA, then the Apple Silicon GPU, then the CPU -- unless something pins one.
+
+    LIVECAPTION_DEVICE wins over --device; the hosts pass the environment through, so it is the
+    one way to force cpu from a start.sh command line.
+    """
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    preference = os.environ.get("LIVECAPTION_DEVICE") or preference
+    if preference != "auto":
+        return preference
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 def main():
     args = parse_args()
 
-    try:
-        import torch
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    except ImportError:
-        torch, device = None, "cpu"
-    print(f"ASR device: {device}" + ("" if device.startswith("cuda") else " (torch cannot see a GPU)"),
+    device = pick_device(args.device)
+    print(f"ASR device: {device}" + (" (torch cannot see a GPU)" if device == "cpu" else ""),
           file=sys.stderr)
+    print(f"HF cache: {os.environ['HF_HOME']}", file=sys.stderr)
+    if "streaming" in args.hf_model.lower():
+        print(f"note: {args.hf_model} looks like a cache-aware streaming checkpoint. This worker is"
+              f" the offline path -- it cuts the audio into {args.chunk_seconds}s blocks and throws"
+              " the encoder cache away between them. hf_stream_worker.py (--asr hf-stream) keeps it.",
+              file=sys.stderr)
 
     # ponytail: Qwen3-ASR needs its own package; everything else stays on the generic pipeline
     if "qwen3-asr" in args.hf_model.lower():
@@ -41,9 +79,17 @@ def main():
         except ImportError:
             print("Install qwen-asr to use Qwen3-ASR models: pip install qwen-asr", file=sys.stderr)
             return 1
+        kwargs = {} if device == "cpu" else {"device_map": device}
         if device.startswith("cuda"):
-            model = Qwen3ASRModel.from_pretrained(args.hf_model, dtype=torch.bfloat16, device_map=device)
-        else:
+            import torch
+            kwargs["dtype"] = torch.bfloat16
+        try:
+            model = Qwen3ASRModel.from_pretrained(args.hf_model, **kwargs)
+        except (ValueError, RuntimeError, NotImplementedError) as exc:
+            # ponytail: qwen-asr only promises cuda, so a device_map it does not know should cost
+            # the acceleration, not the whole worker
+            print(f"{device} rejected by qwen-asr ({exc}); using cpu", file=sys.stderr)
+            device = "cpu"
             model = Qwen3ASRModel.from_pretrained(args.hf_model)
 
         def asr(inputs):

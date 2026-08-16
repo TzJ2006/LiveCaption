@@ -16,13 +16,14 @@ LiveCaption’s Swift host:
 4. Shows captions at the bottom of the screen
 5. Writes final text under `transcripts/`
 
-Dual-source mode uses two independent recognition streams and two caption panes:
+There is one caption pane. Under `--source auto` both channels are captured but only the one that
+is talking is recognized, and each line says which channel it came from:
 
 ```text
-┌─────────────────────────────┬─────────────────────────────┐
-│ speaker / system            │ microphone                  │
-│ Remote or computer playback │ What you say into the mic   │
-└─────────────────────────────┴─────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ (speaker) Remote or computer playback                     │
+│ (microphone) What you say into the mic                    │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ## 2. Prepare the Environment
@@ -51,8 +52,8 @@ xcode-select --install
 
 Open **System Settings → Privacy & Security** and enable what your source needs:
 
-- **Microphone**: required for `mic` or `both`
-- **Screen Recording**: required for `system` or `both` (ScreenCaptureKit reads system audio this way)
+- **Microphone**: required for `mic` or `auto`
+- **Screen Recording**: required for `system` or `auto` (ScreenCaptureKit reads system audio this way)
 - **Speech Recognition**: required only for `--asr apple`
 
 The permission list may show Terminal, `live-subtitle`, or the terminal app that launched it. After changing permissions, stop LiveCaption and run the start command again; if needed, fully quit and reopen the terminal.
@@ -62,7 +63,7 @@ The permission list may show Terminal, `live-subtitle`, or the terminal app that
 Recognize meeting audio and your microphone together:
 
 ```bash
-bash scripts/start.sh --source both --asr sherpa
+bash scripts/start.sh --source auto --asr sherpa
 ```
 
 If Sherpa is not installed locally, the start script will:
@@ -102,25 +103,30 @@ Computer playback only:
 bash scripts/start.sh --source system --asr sherpa
 ```
 
-Both:
+Both channels, one recognizer (the default):
 
 ```bash
-bash scripts/start.sh --source both --asr sherpa
+bash scripts/start.sh --source auto --asr sherpa
 ```
 
-In `both` mode:
+In `auto` mode:
 
-- Left pane `(speaker)` = system audio
-- Right pane `(microphone)` = mic
-- Both panes can update at once without overwriting each other
-- Transcripts are saved separately
+- Both channels are captured, but only the one that is talking is sent to the recognizer
+- The speaker wins while it has voice; after ~0.6s of quiet the microphone takes over
+- One pane, one recognizer — and every line is prefixed `(speaker)` or `(microphone)`
+- Both channels share `transcripts/YYYY-MM-DD.txt`, with the same prefix written into each line
+- A line is credited to whichever channel started it, so a handover mid-sentence does not split it
+- `--record` / `--debug` still write one WAV per channel — the gate picks captions, not recordings
+
+The old `--source both`, which ran a recognizer per channel in two side-by-side columns, is
+retired. It is still accepted and resolves to `auto`.
 
 ## 6. Chinese, English, and Mixed Input
 
 Sherpa uses a bilingual model — no language flag needed:
 
 ```bash
-bash scripts/start.sh --source both --asr sherpa
+bash scripts/start.sh --source auto --asr sherpa
 ```
 
 It handles Chinese, English, and mixed speech. Proper nouns, names, acronyms, and overlapping speakers can still be wrong.
@@ -143,25 +149,120 @@ For dual-source meetings, prefer Sherpa so you are not limited by Apple Speech c
 
 The window starts at the bottom of the screen, spanning its full width:
 
-- Drag handle (left of `Hide`): move the window; it always keeps a corner reachable on screen
+- Drag handle (left of the model dropdown): move the window; it always keeps a corner reachable
+- Model dropdown: switch the ASR model in place, without restarting
 - `Hide`: collapse to a pill holding just the control bar, anchored at the bottom-right corner
 - `Show`: restore full captions, growing back up and to the left from the pill
 - `Quit`: stop LiveCaption and exit (macOS runs `scripts/stop.sh`)
 - Select captions, then `Cmd+C` (Windows: `Ctrl+C`): copy selection
-- Same shortcut with no selection: copy full history for the current pane
+- Same shortcut with no selection: copy the full caption history
 - Mouse wheel: scroll older captions
 
 Adjust height and opacity:
 
 ```bash
 bash scripts/start.sh \
-  --source both \
+  --source auto \
   --asr sherpa \
   --height 160 \
   --opacity 0.85
 ```
 
-Parameter changes need a stop + restart to take effect.
+Parameter changes need a stop + restart to take effect — except the ASR model, which the dropdown
+switches live.
+
+Fill the dropdown with the Hugging Face models you want to reach:
+
+```bash
+bash scripts/start.sh \
+  --source auto \
+  --asr sherpa \
+  --hf-models Qwen/Qwen3-ASR-0.6B,openai/whisper-large-v3-turbo
+```
+
+Picking an entry stops the running recognizer and starts the chosen one; capture and the
+transcript files keep running, and the caption area reports `Switching to ...` then `... ready`.
+If a model cannot start, the failure is reported there and the run continues — pick another entry.
+Hugging Face weights download into `models/hf/` inside the project, so the first switch to a new
+model takes as long as its download.
+
+Each Hugging Face entry is tagged `(chunked)` or `(streaming)` — see the next section.
+
+## 7a. Offline vs Streaming Hugging Face Models
+
+`--asr hf` and `--asr hf-stream` are two different workers, because the models are two different
+things:
+
+- **`hf` (offline)** — Whisper, Qwen3-ASR and friends. The audio is cut into `--chunk-seconds`
+  clips and each clip is transcribed on its own, so a caption appears only once its clip is over
+  and every caption is final.
+- **`hf-stream` (streaming)** — cache-aware RNNT checkpoints such as
+  `nvidia/nemotron-3.5-asr-streaming-0.6b`. One recognition stays open for the whole run and is
+  fed the chunk size the model was trained on, reusing its encoder cache. Text appears while the
+  sentence is still being spoken and is committed when the model punctuates it.
+
+```bash
+bash scripts/start.sh \
+  --source auto \
+  --asr hf-stream \
+  --hf-model nvidia/nemotron-3.5-asr-streaming-0.6b \
+  --language auto
+```
+
+`--language` matters here: it becomes the model's language prompt. Use `auto` to let it detect
+per utterance (useful when the speaker pane and your mic are in different languages), or a locale
+such as `zh-CN` / `en-US` to pin it. Unsupported values fall back to `auto` with a note on stderr.
+
+The dropdown decides which worker an id gets from the id itself — anything containing `streaming`
+takes the streaming path. Override it with a prefix:
+
+```bash
+bash scripts/start.sh --source auto --asr sherpa \
+  --hf-models stream:my/custom-cache-aware-model,offline:some/streaming-named-but-offline-model
+```
+
+Streaming checkpoints need `transformers >= 5.13`, while `qwen-asr` pins `transformers==4.57.6`,
+so they cannot share one interpreter. `start.sh` handles this: the first time a streaming model is
+in reach it runs `scripts/setup-hf-stream.sh`, which builds `.build/stream-env` inside the project
+and installs the newer transformers there. Use `--hf-stream-python` if you keep your own instead.
+
+### The GPU
+
+Both Hugging Face workers pick a device by themselves — CUDA, then `mps` (Apple Silicon), then the
+CPU. Check which one you got:
+
+```bash
+grep "ASR device" logs/subtitle.log
+```
+
+For the streaming path this decides whether the feature works at all. On this project's Mac, 44
+seconds of audio through the 0.6B Nemotron model took **16 s on `mps`** (2.7x faster than
+realtime) and **147 s on the CPU** (3.3x slower). Slower than realtime is not "laggy captions" —
+the unprocessed audio piles up and the captions fall further behind every second, forever.
+
+If an operation is missing on MPS in your torch build, force the CPU:
+
+```bash
+LIVECAPTION_DEVICE=cpu bash scripts/start.sh --source auto --asr hf-stream \
+  --hf-model nvidia/nemotron-3.5-asr-streaming-0.6b
+```
+
+### If the dropdown looks empty
+
+The menu lists the built-in backends plus **only the model ids you passed**. A bare
+`bash scripts/start.sh` names no model, so nothing Hugging Face shows up. Either pass the ids, or
+write them into `config.json` at the project root — both hosts read it now, and command-line flags
+still override it:
+
+```json
+{
+  "source": "auto",
+  "asr": "hf-stream",
+  "hf-model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+  "hf-models": ["Qwen/Qwen3-ASR-0.6B"],
+  "language": "auto"
+}
+```
 
 ## 8. Transcripts and Logs
 
@@ -203,7 +304,7 @@ If capture works but captions do not appear, use debug mode:
 
 ```bash
 bash scripts/stop.sh
-bash scripts/start.sh --source both --asr sherpa --debug
+bash scripts/start.sh --source auto --asr sherpa --debug
 ```
 
 The window shows dB levels for both inputs and writes under `debug-audio/`:
@@ -252,7 +353,7 @@ bash scripts/stop.sh
 Then start again:
 
 ```bash
-bash scripts/start.sh --source both --asr sherpa
+bash scripts/start.sh --source auto --asr sherpa
 ```
 
 If you see `Subtitle window already running`, run the stop command first. The stop script also cleans up Sherpa / Hugging Face child processes.
@@ -271,12 +372,12 @@ Then restart:
 
 ```bash
 bash scripts/stop.sh
-bash scripts/start.sh --source both --asr sherpa
+bash scripts/start.sh --source auto --asr sherpa
 ```
 
 ### No captions for system audio
 
-1. Confirm the command uses `--source system` or `--source both`
+1. Confirm the command uses `--source system` or `--source auto`
 2. Confirm Screen Recording is enabled
 3. Play audible content on the computer
 4. Use `--debug` and check speaker dB
@@ -317,7 +418,7 @@ Stop, then:
 bash scripts/start.sh --source system --asr sherpa --debug
 ```
 
-When both work alone, use `--source both`. Sherpa creates an independent stream per source.
+When each works alone, use `--source auto`; the gate then picks between them.
 
 ## 13. Local Processing and Privacy
 
