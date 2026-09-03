@@ -5,7 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/.build"
 ENV_DIR="$BUILD_DIR/stream-env"
-PY="$ENV_DIR/bin/python"
+# ponytail: same probe as stream_python() in win_host.py -- Windows venvs are Scripts/python.exe,
+# and hardcoding bin/python made this script rm -rf and rebuild the venv on every single run.
+venv_python() {
+    for candidate in "$ENV_DIR/bin/python" "$ENV_DIR/Scripts/python.exe"; do
+        [[ -x "$candidate" ]] && { echo "$candidate"; return; }
+    done
+    echo "$ENV_DIR/bin/python"  # does not exist yet; the [[ -x ]] guards below handle that
+}
+PY="$(venv_python)"
 
 mkdir -p "$BUILD_DIR/pip-cache" "$BUILD_DIR/tmp"
 export PIP_CACHE_DIR="$BUILD_DIR/pip-cache"
@@ -33,6 +41,7 @@ fi
 if [[ ! -x "$PY" ]]; then
     echo "Creating the streaming ASR environment inside LiveCaption..."
     python3 -m venv --system-site-packages "$ENV_DIR"
+    PY="$(venv_python)"  # only now can we tell whether this venv is bin/ or Scripts/
 fi
 
 if ! "$PY" -c 'import transformers as t; v=[int(p) for p in t.__version__.split(".")[:2]]; raise SystemExit(0 if v >= [5, 13] else 1)' 2>/dev/null; then

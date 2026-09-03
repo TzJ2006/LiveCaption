@@ -111,6 +111,35 @@ def model_choices(asr, hf_model, hf_models):
     return choices
 
 
+def worker_command(choice, args, base_pythonpath=""):
+    """Same NDJSON protocol for every backend, so only the command line differs.
+
+    Module level rather than a closure so bench_asr.py can spawn the exact command the app spawns
+    -- a benchmark that builds its own copy of this measures a command line that drifts.
+    """
+    if choice["asr"] == "hf":
+        cmd = [sys.executable, os.path.join(HERE, "hf_asr_worker.py"),
+               "--hf-model", choice["hf_model"], "--chunk-seconds", str(args.chunk_seconds)]
+        return cmd + (["--context", args.context] if getattr(args, "context", "") else [])
+    if choice["asr"] == "hf-stream":
+        return [args.hf_stream_python, os.path.join(HERE, "hf_stream_worker.py"),
+                "--hf-model", choice["hf_model"], "--language", args.language]
+    if choice["asr"] == "api":
+        cmd = [sys.executable, os.path.join(HERE, "api_asr_worker.py"),
+               "--api-model", choice["hf_model"], "--chunk-seconds", str(args.chunk_seconds)]
+        return cmd + (["--key-config", args.key_config] if getattr(args, "key_config", "") else [])
+    if choice["asr"] == "wsl-vllm":
+        drive, rest = os.path.splitdrive(os.path.join(HERE, "qwen_stream_worker.py"))
+        cmd = ["wsl", args.wsl_python, "/mnt/" + drive[0].lower() + rest.replace("\\", "/")]
+        return cmd + (["--hf-model", args.hf_model] if args.hf_model else [])
+    env_deps = os.path.join(PROJECT, ".build", "pydeps")
+    # rebuilt from the startup value so repeated switches cannot stack the path up
+    os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (env_deps, base_pythonpath) if p)
+    cmd = [sys.executable, os.path.join(HERE, "sherpa_asr_worker.py"),
+          "--chunk-seconds", str(args.chunk_seconds)]
+    return cmd + (["--model-dir", args.model_dir] if getattr(args, "model_dir", "") else [])
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default=os.path.join(PROJECT, "config.json"),
@@ -139,6 +168,11 @@ def parse_args():
     p.add_argument("--language", default="zh-CN",
                    help="language prompt for hf-stream (auto detects per utterance); the other "
                         "workers auto-detect and only accept it for start.sh parity")
+    p.add_argument("--context", default="",
+                   help="vocabulary hint for --asr hf with Qwen3-ASR: jargon, product names, "
+                        "attendee names. Comma-separated is fine; other backends ignore it")
+    p.add_argument("--model-dir", default="",
+                   help="model directory for --asr sherpa; omit to use the worker's default")
     p.add_argument("--output-dir", default=os.path.join(PROJECT, "transcripts"))
     p.add_argument("--record", action="store_true")
     p.add_argument("--record-dir", default=os.path.join(PROJECT, "recordings"))
@@ -231,13 +265,17 @@ class AudioGate:
         self.last_system_voice = float("-inf")
         self.selected = "mic"
         self.positions = {}
+        # ponytail: live capture arrives in real time, so the wall clock IS the audio clock. Only
+        # bench_asr.py replaying a file faster than real time needs to say otherwise, and it swaps
+        # in an audio-position clock rather than forking the handover logic.
+        self.clock = time.monotonic
 
     def process(self, source, rate, floats):
         """16 kHz mono for the winning channel, or None when `source` is the muted one."""
         if floats.size == 0 or rate <= 0:
             return None
         with self.lock:
-            now = time.monotonic()
+            now = self.clock()
             if source == "sys" and rms_db(floats) >= self.SYSTEM_VOICE_DB:
                 self.last_system_voice = now
             self.selected = "sys" if now - self.last_system_voice <= self.HANGOVER else "mic"
@@ -554,23 +592,6 @@ def main():
     events = queue.Queue()
     base_pythonpath = os.environ.get("PYTHONPATH", "")
 
-    def worker_command(choice):
-        """Same NDJSON protocol for every backend, so only the command line differs."""
-        if choice["asr"] == "hf":
-            return [sys.executable, os.path.join(HERE, "hf_asr_worker.py"),
-                    "--hf-model", choice["hf_model"], "--chunk-seconds", str(args.chunk_seconds)]
-        if choice["asr"] == "hf-stream":
-            return [args.hf_stream_python, os.path.join(HERE, "hf_stream_worker.py"),
-                    "--hf-model", choice["hf_model"], "--language", args.language]
-        if choice["asr"] == "wsl-vllm":
-            drive, rest = os.path.splitdrive(os.path.join(HERE, "qwen_stream_worker.py"))
-            cmd = ["wsl", args.wsl_python, "/mnt/" + drive[0].lower() + rest.replace("\\", "/")]
-            return cmd + (["--hf-model", args.hf_model] if args.hf_model else [])
-        env_deps = os.path.join(PROJECT, ".build", "pydeps")
-        # rebuilt from the startup value so repeated switches cannot stack the path up
-        os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (env_deps, base_pythonpath) if p)
-        return [sys.executable, os.path.join(HERE, "sherpa_asr_worker.py")]
-
     gate = AudioGate() if args.source == "auto" else None
     # the channel the last gated frame came from; read_worker() puts it back on the text
     heard = {"source": "mic"}
@@ -692,8 +713,9 @@ def main():
 
     def start_worker(choice):
         try:
-            worker = subprocess.Popen(worker_command(choice), stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1)
+            worker = subprocess.Popen(worker_command(choice, args, base_pythonpath),
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      text=True, encoding="utf-8", bufsize=1)
         except OSError as exc:
             events.put(("__status__", f"Could not start {choice['menu']}: {exc}", RED, None))
             return

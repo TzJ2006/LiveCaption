@@ -14,6 +14,7 @@ node_modules/
 .env
 .env.*
 *.key
+keys.json
 
 # Logs
 *.log
@@ -48,6 +49,9 @@ archive/
 # Local config (copy config.example.json to config.json)
 config.json
 recordings/
+
+# Benchmark clips, runs and reference transcripts (cut from private meeting audio)
+bench/
 
 # Python bytecode cache
 __pycache__/

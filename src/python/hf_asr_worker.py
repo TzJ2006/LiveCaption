@@ -36,6 +36,10 @@ def parse_args():
     parser.add_argument("--chunk-seconds", type=float, default=3.0)
     parser.add_argument("--device", default="auto",
                         help="auto picks cuda, then mps (Apple Silicon), then cpu; pass one to pin it")
+    parser.add_argument("--context", default="",
+                        help="free-form vocabulary hint for Qwen3-ASR (jargon, product names, "
+                             "attendee names). It becomes the system message, so a plain "
+                             "comma-separated term list works. Ignored by other models")
     return parser.parse_args()
 
 
@@ -93,9 +97,15 @@ def main():
             model = Qwen3ASRModel.from_pretrained(args.hf_model)
 
         def asr(inputs):
-            results = model.transcribe(audio=(inputs["array"], inputs["sampling_rate"]))
+            # ponytail: context goes straight into the chat template's system message, so a bare
+            # comma-separated term list is a valid value -- no formatting, no tokenizer work here.
+            results = model.transcribe(audio=(inputs["array"], inputs["sampling_rate"]),
+                                       context=args.context)
             return {"text": results[0].text}
     else:
+        if args.context:
+            print(f"note: --context only reaches Qwen3-ASR; {args.hf_model} ignores it",
+                  file=sys.stderr)
         try:
             from transformers import pipeline
         except ImportError:
@@ -111,6 +121,27 @@ def main():
     print(json.dumps({"status": "ready", "device": device}), flush=True)
     buffers = defaultdict(list)
     sample_rates = {}
+
+    def flush(source):
+        """Recognize everything buffered for one source, as one self-contained clip.
+
+        Called when the buffer reaches --chunk-seconds, and once per source at EOF -- without the
+        EOF call the last partial chunk is silently dropped, which is the tail of whatever was
+        being said when the host quit.
+        """
+        if not buffers[source]:
+            return
+        chunk = np.concatenate(buffers[source])
+        buffers[source].clear()
+        try:
+            result = asr({"array": chunk, "sampling_rate": sample_rates[source]})
+            text = (result.get("text") or "").strip()
+        except Exception as exc:
+            print(f"asr error: {exc}", file=sys.stderr)
+            return
+        if text:
+            print(json.dumps({"source": source, "text": text, "final": True}, ensure_ascii=False),
+                  flush=True)
 
     for line in sys.stdin:
         if not line.strip():
@@ -132,20 +163,11 @@ def main():
         sample_rates[source] = sample_rate
 
         total = sum(chunk.size for chunk in buffers[source])
-        if total / sample_rate < args.chunk_seconds:
-            continue
+        if total / sample_rate >= args.chunk_seconds:
+            flush(source)
 
-        chunk = np.concatenate(buffers[source])
-        buffers[source].clear()
-        try:
-            result = asr({"array": chunk, "sampling_rate": sample_rate})
-            text = (result.get("text") or "").strip()
-        except Exception as exc:
-            print(f"asr error: {exc}", file=sys.stderr)
-            continue
-        if text:
-            print(json.dumps({"source": source, "text": text, "final": True}, ensure_ascii=False), flush=True)
-
+    for source in list(buffers):  # stdin closed: whatever is left is still speech
+        flush(source)
     return 0
 
 

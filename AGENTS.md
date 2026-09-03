@@ -15,7 +15,7 @@ tkinter overlay). No build system beyond `pip` and (macOS only) `xcrun swiftc`.
 - Sherpa setup (macOS): `bash scripts/setup-sherpa.sh` — auto-invoked by start.sh; installs sherpa-onnx into `.build/pydeps` and downloads the bilingual zh-en model into `models/`
 - Streaming setup: `bash scripts/setup-hf-stream.sh` — auto-invoked by start.sh when a streaming model is in reach; builds `.build/stream-env` (venv with `--system-site-packages`) holding transformers >= 5.13
 - File transcription (macOS): `bash scripts/transcribe.sh <file.wav> --language en-US [--output out.txt]` (Apple Speech, exits when done)
-- Test: `python src/python/win_host.py --self-test` — the only automated test (prints `self-test ok`); there is no pytest/unittest suite
+- Test: `python src/python/win_host.py --self-test` — the only automated test (prints `self-test ok`); there is no pytest/unittest suite. It is a plain `assert` block covering downmix/RMS, the `AudioGate` handover and resampler drift, `hf_choice()`/`model_choices()`, and the overlay's text model, pill collapse and drag clamp — it builds a real hidden `Tk` window, so it needs a display
 - Transcript LLM query: `python3 src/python/query_transcript.py transcripts/<date>.txt "prompt"` (OpenAI-compatible local API, default Ollama at `http://localhost:11434/v1`; override with `LOCAL_LLM_BASE_URL` / `LOCAL_LLM_MODEL` / `LOCAL_LLM_API_KEY`)
 
 No linter or formatter is configured.
@@ -68,6 +68,15 @@ and start.sh still accept the value and resolve it to `auto` with a note on stde
 `config.json` files keep working. Do not reintroduce a second pane: two recognizers writing one
 window is exactly what the gate exists to avoid, and a single text view has one tail, so two live
 partial lines would overwrite each other.
+
+Caption window: `Overlay` (win_host.py) is a port of `SubtitleWindow` / `DragHandleView`
+(LiveSubtitle.swift), and the two are kept in step by mirroring the Swift `static let` sizes as
+class constants — `BAR_H`/`BTN_W`/`MODEL_W`/`HANDLE`/`GAP`/`PAD`, with `COLLAPSED_W` derived from
+them rather than hardcoded. Those are macOS points; `_px()` scales them once against the display
+DPI, so a layout change means editing the constant in both hosts, never a pixel literal. The window
+spans the full screen width, the handle drags it, and Hide collapses it to a pill that keeps only
+the control bar pinned to the window's bottom-right corner. `_clamp()` is `clampedOrigin()` flipped
+into Tk's top-left origin: `MIN_VISIBLE` stays reachable so the window cannot be dragged away.
 
 Model hot swap: the caption bar's dropdown (built from `--hf-model` + `--hf-models` plus the
 host's built-in backends) stops the running recognizer and starts the new one without restarting
