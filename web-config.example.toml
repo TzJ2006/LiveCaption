@@ -1,0 +1,10 @@
+host = "127.0.0.1"
+port = 8872
+data_dir = "data/web"
+backup_dir = "data/web/backups"
+modules = ["pages", "caption"]
+
+[caption]
+# Reference one existing model directory; do not copy weights into this repo.
+model_dir = ""
+num_threads = 2

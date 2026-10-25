@@ -67,3 +67,8 @@ __pycache__/
 .codex/hooks.json
 ideas/
 docs/ecl/
+
+# Web adapter local data and packaging
+*.egg-info/
+data/
+web-config.toml

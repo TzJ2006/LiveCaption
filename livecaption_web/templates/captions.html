@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}实时字幕{% endblock %}
+{% block flash %}{% if error or message %}<div class="flash err" role="alert">语音识别或摘要处理遇到问题。<details class="more"><summary>查看具体原因</summary>{{ error or message }}</details></div>{% endif %}{% endblock %}
+{% block body %}
+{% if not summary_enabled %}<p>摘要功能未启用。字幕仍会保存，可在「转写记录」查看。</p>{% endif %}
+<div class="row spread">
+  <h1>实时字幕</h1>
+  <a href="/transcripts">已保存的语音文字 →</a>
+</div>
+<section class="card">
+  <p>把这台电脑上的声音实时转成文字。点击「开始字幕」后，可以对着麦克风说话，或播放一段视频、会议录音。</p>
+  <div class="row spread">
+    {% if listening %}
+    <span class="pill ok">● 正在识别声音</span>
+    <form method="post" action="/captions/stop"><button type="submit" class="big">停止字幕</button></form>
+    {% else %}
+    <span class="pill">尚未开始</span>
+    <form method="post" action="/captions/start"><button type="submit" class="big primary">开始字幕</button></form>
+    {% endif %}
+  </div>
+  <pre id="live" class="live{% if listening %} listening{% endif %}"></pre>
+  <p class="note">一句话识别完成后会自动保存。{% if summary_enabled %}点击「停止字幕」后，助手会根据本次已保存的文字生成摘要，可在「摘要」页查看。{% else %}当前只保存文字，不会生成摘要。{% endif %}</p>
+  {% if dropped %}<p class="note"><span class="pill warn">有音频未能处理</span> 识别速度跟不上，部分内容可能漏掉。可以展开下方说明查看数量。</p>{% endif %}
+  <details class="more">
+    <summary>识别速度和使用说明</summary>
+    <p class="note">正在变化的文字还没确定，只有一句话识别完成后才会保存。电脑播放声音时优先识别电脑声音，安静时识别麦克风；目前不会把两路声音分别记录。</p>
+    <p>等待识别的音频：{{ queue_length }} 段；本次最多积压：{{ queue_max }} 段；来不及处理而跳过：{{ dropped }} 段。</p>
+    <p class="note">这些数字在刷新页面时更新。如果跳过数量持续增加，说明识别速度跟不上声音。语音识别使用这台电脑的 CPU。</p>
+    <p class="note">字幕显示在这个网页里，目前不能悬浮在其他窗口上方。</p>
+  </details>
+</section>
+<style>
+  .live { min-height: 12rem; max-height: 60vh; overflow-y: auto; font: 1.05rem/1.7 system-ui, "Microsoft YaHei", sans-serif; }
+  .live:empty::before { content: "点击「开始字幕」后，识别到的文字会出现在这里。"; color: var(--dim); }
+  .live.listening:empty::before { content: "等待声音……请说话或播放音频。"; }
+</style>
+<script>
+const live = document.getElementById("live");
+const source = new EventSource("/captions/events");
+source.onmessage = (event) => {
+  const item = JSON.parse(event.data);
+  const line = (item.final ? "" : "… ") + (item.text || "");
+  if (item.final) {
+    const parts = live.textContent.split("\n");
+    parts[parts.length - 1] = line;
+    live.textContent = parts.join("\n") + "\n";
+  } else {
+    const parts = live.textContent.split("\n");
+    parts[parts.length - 1] = line;
+    live.textContent = parts.join("\n");
+  }
+  live.scrollTop = live.scrollHeight;
+};
+</script>
+{% endblock %}
