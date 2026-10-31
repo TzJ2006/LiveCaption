@@ -1,6 +1,6 @@
 """Streaming sherpa-onnx worker. Offline SenseVoice and FireRed models are refused.
 
-Run as ``python -m modules.caption.asr_worker --model-dir <path>``. The parent process
+Run as ``python -m livecaption_web.asr_worker --model-dir <path>``. The parent process
 does not import sherpa. CPU only; this process does not take a GPU lease.
 """
 
@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 TARGET_RATE = 16000
+_DLL_HANDLES = []
 
 
 class OfflineModelError(RuntimeError):
@@ -46,16 +47,26 @@ def pick(model_dir: Path, stem: str) -> str:
 
 def prepare_runtime() -> Path | None:
     """Prefer the ONNX Runtime shipped with sherpa-onnx 1.13.8 over an older System32 copy."""
-    from core.instance import install_root
-    root = install_root() / "models" / "onnxruntime"
-    if not root.is_dir():
-        return None
-    libraries = sorted(root.rglob("onnxruntime.dll"))
+    from importlib.util import find_spec
+    roots = []
+    configured = os.environ.get("LIVECAPTION_ONNX_RUNTIME_DIR")
+    if configured:
+        roots.append(Path(configured))
+    roots.append(Path.cwd() / "models" / "onnxruntime")
+    # Independent installs use the ASR package's own runtime, not a hub checkout.
+    try:
+        spec = find_spec("sherpa_onnx")
+    except (ImportError, ValueError):
+        spec = None
+    if spec is not None and spec.origin:
+        roots.append(Path(spec.origin).parent / "lib")
+    libraries = next((found for root in roots if root.is_dir()
+                      if (found := sorted(root.rglob("onnxruntime.dll")))), [])
     if not libraries:
         return None
     folder = libraries[0].parent
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        os.add_dll_directory(str(folder))
+        _DLL_HANDLES.append(os.add_dll_directory(str(folder)))
     os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
     return folder
 

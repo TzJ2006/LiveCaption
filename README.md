@@ -1,6 +1,10 @@
+> 网页版架构（2026-10-25）：`livecaption_web` 直接依赖独立 `agent-runtime`，不再依赖 Personal Agents 中枢包。独立入口：`python -m livecaption_web --config web-config.example.toml --no-workers`。原生采集、窗口和后端协议仍在本仓库；不同平台与流式后端保持明确适配边界。
+
 # LiveCaption
 
 English | [中文](README.zh.md)
+
+Windows also has a native overlay (`scripts/start.bat`) and an independently runnable [web adapter](docs/WEB-APP.md). Personal Agents now imports that adapter from this repository instead of maintaining another copy.
 
 **LiveCaption** is a lightweight, multi-backend speech-to-text framework for macOS. Capture the microphone, system audio, or both; pick an ASR backend (Apple Speech, local Sherpa-ONNX, or Hugging Face); show live captions; and save transcripts in the project directory.
 
@@ -293,7 +297,7 @@ python3 src/python/query_transcript.py \
   "Summarize the meeting decisions and action items"
 ```
 
-Default endpoint: `http://localhost:11434/v1`, default model: `llama3.1`. Override with `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`, and `LOCAL_LLM_API_KEY`.
+The script has no default endpoint or model. Set `LOCAL_LLM_BASE_URL` to an OpenAI-compatible base you already run (for a local Ollama this is `http://127.0.0.1:11434/v1`) and `LOCAL_LLM_MODEL` to a model already available there. `LC_OLLAMA_URL` and `LC_OLLAMA_MODEL` are accepted when the `LOCAL_LLM_*` pair is unset; a root such as `http://127.0.0.1:11434` is called at `/v1`. `LOCAL_LLM_API_KEY` is optional and defaults to the local placeholder `ollama`. `--base-url` and `--model` override those variables. If the URL or model name is missing, the process exits with code 2 and does not call another model.
 
 ## Full Tutorial
 

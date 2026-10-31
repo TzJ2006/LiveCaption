@@ -9,17 +9,29 @@ from urllib.parse import quote
 
 from starlette.responses import RedirectResponse, StreamingResponse
 
-from modules.caption.service import CaptionService
+from livecaption_web.service import CaptionService
 
 
 def register(ctx) -> None:
-    from core.texts import register as register_texts
+    from agent_runtime.texts import register as register_texts
     register_texts(ctx)
     ctx.caption = CaptionService(ctx)
+    ctx.calls['caption_transcripts'] = lambda since: export_transcripts(ctx,since)
     ctx.routes.append(("/captions", captions_page, ["GET"]))
     ctx.routes.append(("/captions/events", captions_events, ["GET"]))
     ctx.routes.append(("/captions/start", captions_start, ["POST"]))
     ctx.routes.append(("/captions/stop", captions_stop, ["POST"]))
+
+
+def export_transcripts(ctx,since):
+    """Public read interface for final web-caption records; no device access."""
+    from datetime import datetime
+    datetime.fromisoformat(since.replace('Z','+00:00'))
+    conn=ctx.connect()
+    try:
+        return [dict(row) for row in conn.execute(
+            "SELECT conversation_id,seq,ts,role,text FROM texts WHERE source='caption' AND ts>=? ORDER BY ts,conversation_id,seq",(since,))]
+    finally:conn.close()
 
 
 async def captions_page(request):

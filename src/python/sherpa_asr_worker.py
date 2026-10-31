@@ -59,8 +59,17 @@ def pick(model_dir: pathlib.Path, stem: str) -> str:
     return ""
 
 
+def _admit_asr(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝加载本地 ASR 模型") from exc
+    require_local(model, holder="livecaption-asr", backend="inprocess", purpose="asr")
+
+
 def build(model_dir: pathlib.Path, args):
     """(recognizer, streaming?) for whichever model lives in model_dir."""
+    _admit_asr(model_dir.name)
     tokens = str(model_dir / "tokens.txt")
     joiner = pick(model_dir, "joiner")
     if joiner:

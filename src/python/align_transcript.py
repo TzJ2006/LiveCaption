@@ -15,6 +15,14 @@ import os
 import sys
 
 
+def _admit_asr(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝加载本地 ASR 模型") from exc
+    require_local(model, holder="livecaption-asr", backend="inprocess", purpose="asr")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("audio")
@@ -36,6 +44,7 @@ def main():
         with open(text, encoding="utf-8") as f:
             text = f.read()
 
+    _admit_asr(args.model)
     model = Qwen3ForcedAligner.from_pretrained(args.model)
     results = model.align(audio=args.audio, text=text, language=args.language)
     for item in results[0]:

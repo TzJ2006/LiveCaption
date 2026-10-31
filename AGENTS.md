@@ -16,7 +16,7 @@ tkinter overlay). No build system beyond `pip` and (macOS only) `xcrun swiftc`.
 - Streaming setup: `bash scripts/setup-hf-stream.sh` — auto-invoked by start.sh when a streaming model is in reach; builds `.build/stream-env` (venv with `--system-site-packages`) holding transformers >= 5.13
 - File transcription (macOS): `bash scripts/transcribe.sh <file.wav> --language en-US [--output out.txt]` (Apple Speech, exits when done)
 - Test: `python src/python/win_host.py --self-test` — the only automated test (prints `self-test ok`); there is no pytest/unittest suite. It is a plain `assert` block covering downmix/RMS, the `AudioGate` handover and resampler drift, `hf_choice()`/`model_choices()`, and the overlay's text model, pill collapse and drag clamp — it builds a real hidden `Tk` window, so it needs a display
-- Transcript LLM query: `python3 src/python/query_transcript.py transcripts/<date>.txt "prompt"` (OpenAI-compatible local API, default Ollama at `http://localhost:11434/v1`; override with `LOCAL_LLM_BASE_URL` / `LOCAL_LLM_MODEL` / `LOCAL_LLM_API_KEY`)
+- Transcript LLM query: `python3 src/python/query_transcript.py transcripts/<date>.txt "prompt"` (OpenAI-compatible API). Requires `LOCAL_LLM_BASE_URL` and `LOCAL_LLM_MODEL`, or `LC_OLLAMA_URL` and `LC_OLLAMA_MODEL` (`LC_OLLAMA_URL` may omit `/v1`). `--base-url` / `--model` override both. Optional `LOCAL_LLM_API_KEY`. No built-in endpoint or model. Missing either value exits 2 and does not call another model.
 
 No linter or formatter is configured.
 
@@ -166,4 +166,5 @@ is the only handle the hosts expose since they pass their environment straight t
   those can deadlock on live streams (see the comment at the end of `main()`).
 - `config.json` is gitignored local config and may hold machine-specific paths (e.g. `wsl-python`);
   never commit it. `transcripts/` and `recordings/` hold private meeting data.
+- Headphones swap the default input/output mid-meeting. `MicCapture` re-taps on `AVAudioEngineConfigurationChange`; win_host.py's `capture()` reopens PortAudio when the Windows endpoint count changes (PortAudio freezes its device list at init), and reads only when a block is buffered because a silent loopback never returns from a blocking read.
 - Apple Speech realtime tasks rotate roughly every 50 s; the restart blip is expected, not a bug.

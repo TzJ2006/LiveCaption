@@ -12,8 +12,8 @@ import threading
 import uuid
 from pathlib import Path
 
-from modules.caption.asr_worker import OfflineModelError, streaming_layout
-from modules.caption.capture import AudioGate, offer, start_capture
+from livecaption_web.asr_worker import OfflineModelError, streaming_layout
+from livecaption_web.capture import AudioGate, offer, start_capture
 
 
 class CaptionService:
@@ -229,7 +229,7 @@ class CaptionService:
         command = [
             sys.executable,
             "-m",
-            "modules.caption.asr_worker",
+            "livecaption_web.asr_worker",
             "--model-dir",
             self.ctx.config.caption_model_dir,
             "--num-threads",
@@ -335,6 +335,9 @@ class CaptionService:
         self._enqueue_session_summary(session_id)
 
     def _enqueue_session_summary(self, session_id: str) -> None:
+        completed = self.ctx.calls.get('caption_session_completed')
+        if session_id and completed is not None and completed(session_id):
+            return
         if not session_id or "enqueue_summary" not in self.ctx.calls:
             return
         try:

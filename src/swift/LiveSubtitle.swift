@@ -1128,8 +1128,31 @@ final class MicCapture {
     }
 
     func start() throws {
+        // Plugging in headphones, or a meeting app flipping AirPods into their hands-free mode,
+        // swaps the input device and its sample rate; the engine then stops itself and only says
+        // so through this notification. Without the re-tap the microphone goes silent for the
+        // rest of the run.
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            do {
+                try self.tap()
+            } catch {
+                fputs("Microphone restart failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
+        try tap()
+    }
+
+    private func tap() throws {
+        engine.stop()
         let input = engine.inputNode
+        input.removeTap(onBus: 0)
         let format = input.outputFormat(forBus: 0)
+        // mid-switch there is briefly no input device; installTap would raise on a 0 Hz format,
+        // and the next configuration change brings the new device
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
         input.installTap(onBus: 0, bufferSize: 8192, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             self.onPCM(self.source, buffer)

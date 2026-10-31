@@ -1,0 +1,33 @@
+# Public contract for LiveCaption transcript questions. This directory owns it.
+# interface is the CLI contract, not the chat model version.
+
+capability = "transcripts.query"
+interface = "1.0"
+entry = "query_transcript.py"
+sources = ["query_transcript.py"]
+
+[input]
+positional = ["transcript", "prompt"]
+path_type = "file"
+
+[output]
+stdout = "text"
+
+[errors]
+usage_exit = 2
+failure_exit = 1
+stream = "stderr"
+
+[effects]
+reads_input = true
+writes_caller_files = false
+network = "configured-openai-compatible-endpoint"
+gpu = "caller-configured-model"
+downloads = "none"
+
+[dependencies]
+packages = []
+env = ["LOCAL_LLM_BASE_URL", "LOCAL_LLM_MODEL"]
+
+[optional]
+output = []

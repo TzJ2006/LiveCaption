@@ -3,10 +3,10 @@ name = "livecaption-web"
 version = "0.1.0"
 description = "The LiveCaption web adapter, shared with Personal Agents."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["agent-runtime>=0.1,<1"]
 
 [project.optional-dependencies]
-standalone = ["personal-agents[caption]>=0.1"]
+standalone = ["numpy>=2", "sounddevice>=0.5", "pyaudiowpatch>=0.2.12", "sherpa-onnx>=1.10"]
 
 [project.scripts]
 livecaption-web = "livecaption_web.__main__:main"
@@ -22,4 +22,6 @@ include = ["livecaption_web*"]
 livecaption_web = ["templates/*.html"]
 
 [tool.uv.sources]
-personal-agents = { path = "../personalAgents", editable = true }
+agent-runtime = { path = "../../Shared/agent-runtime", editable = true }
+gadget = { path = "../gadget", editable = true }
+model-access = { path = "../../Shared/model-access", editable = true }

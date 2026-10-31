@@ -2,6 +2,8 @@
 
 [English](tutorial.md) | 中文
 
+Windows 浮窗使用 `scripts/start.bat`，网页方式见[独立网页应用说明](docs/WEB-APP.md)。以下章节描述原有的 macOS 原生流程。
+
 **LiveCaption** 是一个轻量、多后端的 macOS 语音转文字框架。本教程从零开始介绍如何运行它：同时识别系统声音和麦克风、使用英文输入、检查 Debug 音频，以及排查“有声音但没有字幕”等问题。
 
 会议是常见场景（Zoom/Teams/Meet + 麦克风），同一流程也适用于讲座、视频，或任何你想转成文字的实时音频。
@@ -415,5 +417,5 @@ bash scripts/start.sh --source system --asr sherpa --debug
 - transcript、日志、Debug WAV、模型和缓存都保存在 LiveCaption；
 - Apple Speech 可能使用 Apple 在线语音服务；
 - Hugging Face 模式的第三方依赖与缓存不由自动安装器管理；如果要求所有文件都留在项目目录，请使用 Sherpa；
-- `src/python/query_transcript.py` 会把 transcript 发送到你配置的 API 地址，默认是本机 Ollama；
+- `src/python/query_transcript.py` 只把 transcript 发到已配置的 OpenAI 兼容地址（`LOCAL_LLM_BASE_URL` / `LOCAL_LLM_MODEL`，或 `LC_OLLAMA_URL` / `LC_OLLAMA_MODEL`）。没有默认模型；这次调用失败时也不会改走别的服务。
 - 录制会议前应确认参与者同意，并遵守所在地法律和组织政策。

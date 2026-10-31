@@ -28,6 +28,14 @@ def load_audio(path: str) -> tuple[int, np.ndarray]:
     return rate, data
 
 
+def _admit_asr(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝加载本地 ASR 模型") from exc
+    require_local(model, holder="livecaption-asr", backend="inprocess", purpose="asr")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="+")
@@ -35,6 +43,7 @@ def main() -> int:
     args = parser.parse_args()
 
     model = pathlib.Path(args.model_dir).expanduser()
+    _admit_asr(model.name)
     recognizer = sherpa_onnx.OnlineRecognizer.from_paraformer(
         encoder=str(model / "encoder.int8.onnx"),
         decoder=str(model / "decoder.int8.onnx"),

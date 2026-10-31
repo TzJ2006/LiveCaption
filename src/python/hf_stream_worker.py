@@ -303,6 +303,14 @@ def parse_args():
     return parser.parse_args()
 
 
+def _admit_asr(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝加载本地 ASR 模型") from exc
+    require_local(model, holder="livecaption-asr", backend="inprocess", purpose="asr")
+
+
 def main():
     args = parse_args()
 
@@ -318,6 +326,11 @@ def main():
               ' pip install -U "transformers>=5.13"', file=sys.stderr)
         return 1
 
+    try:
+        _admit_asr(args.hf_model)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     processor = AutoProcessor.from_pretrained(args.hf_model)
     # ponytail: the chunk geometry below only exists on cache-aware checkpoints. Refuse the rest
     # here rather than half-work: the offline path already handles them properly.

@@ -36,6 +36,14 @@ def resample16k(audio, rate):
                      np.arange(len(audio)), audio).astype(np.float32)
 
 
+def _admit_asr(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝加载本地 ASR 模型") from exc
+    require_local(model, holder="livecaption-asr", backend="inprocess", purpose="asr")
+
+
 def main():
     args = parse_args()
     try:
@@ -44,6 +52,7 @@ def main():
         print('Inside WSL run: pip install -U "qwen-asr[vllm]"', file=sys.stderr)
         return 1
 
+    _admit_asr(args.hf_model)
     asr = Qwen3ASRModel.LLM(model=args.hf_model, gpu_memory_utilization=0.8, max_new_tokens=32)
     print(json.dumps({"status": "ready", "device": "wsl-vllm"}), flush=True)
 

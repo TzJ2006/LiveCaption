@@ -2,6 +2,8 @@
 
 English | [中文](tutorial.zh.md)
 
+For Windows, use `scripts/start.bat` for the overlay, or follow the [independent web app guide](docs/WEB-APP.md). The sections below describe the original native macOS workflow.
+
 **LiveCaption** is a lightweight multi-backend speech-to-text framework for macOS. This tutorial covers running it: system audio + microphone, English input, debug audio, and fixing “I hear sound but no captions.”
 
 Meetings are a common use case (Zoom/Teams/Meet + your mic), but the same flow works for lectures, videos, or any live audio you want as text.
@@ -426,7 +428,7 @@ When each works alone, use `--source auto`; the gate then picks between them.
 - Transcripts, logs, debug WAVs, models, and caches stay under LiveCaption
 - Apple Speech may use Apple’s online speech services
 - Hugging Face mode deps/caches are not managed by the auto-installer; use Sherpa if everything must stay in the project directory
-- `src/python/query_transcript.py` sends transcript text to the API you configure (default: local Ollama)
+- `src/python/query_transcript.py` sends transcript text only to the configured OpenAI-compatible endpoint (`LOCAL_LLM_BASE_URL` / `LOCAL_LLM_MODEL`, or `LC_OLLAMA_URL` / `LC_OLLAMA_MODEL`). It has no default model and does not switch to another service when that call fails.
 - Confirm participant consent and follow local law and org policy before recording meetings
 
 ## Next Steps

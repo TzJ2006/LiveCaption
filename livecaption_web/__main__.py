@@ -3,7 +3,7 @@ import sys
 
 
 def main():
-    from core.app import main as serve
+    from agent_runtime.app import main as serve
     serve(["--feature", "caption", *sys.argv[1:]])
 
 

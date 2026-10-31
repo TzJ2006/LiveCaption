@@ -2,6 +2,8 @@
 
 [English](README.md) | 中文
 
+Windows 也有独立浮窗（`scripts/start.bat`）和可单独运行的[网页适配器](docs/WEB-APP.md)。Personal Agents 现在引用本仓库的网页实现，不再保留另一份源码。
+
 **LiveCaption** 是一个轻量、多后端的 macOS 语音转文字框架。可捕获麦克风、系统音频或两者；选择 ASR 后端（Apple Speech、本地 Sherpa-ONNX、Hugging Face）；显示实时字幕；并把转录保存在项目目录中。
 
 会议是很自然的场景——Zoom/Teams/Meet 的系统声 + 你的麦克风——同一套能力也适用于讲座、视频、语言练习，或任何你想转成文字的实时音频。
@@ -282,7 +284,7 @@ python3 src/python/query_transcript.py \
   "请总结会议结论和待办事项"
 ```
 
-默认连接 `http://localhost:11434/v1`，默认模型为 `llama3.1`。可以通过 `LOCAL_LLM_BASE_URL`、`LOCAL_LLM_MODEL` 和 `LOCAL_LLM_API_KEY` 修改。
+脚本没有默认地址，也没有默认模型。请把 `LOCAL_LLM_BASE_URL` 设成你已经在运行的 OpenAI 兼容接口（本机 Ollama 一般是 `http://127.0.0.1:11434/v1`），并把 `LOCAL_LLM_MODEL` 设成该服务里已经存在的模型名。未设置这对变量时，也可以用 `LC_OLLAMA_URL` 和 `LC_OLLAMA_MODEL`；`http://127.0.0.1:11434` 这种根地址会请求 `/v1`。`LOCAL_LLM_API_KEY` 可选，缺省是本地占位值 `ollama`。`--base-url` 和 `--model` 会覆盖这些环境变量。地址或模型名缺失时进程以退出码 2 结束，不会改叫别的模型。
 
 ## 完整教程
 

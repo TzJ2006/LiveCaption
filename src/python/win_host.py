@@ -308,6 +308,11 @@ class Recorder:
     def __init__(self, directory, run_id):
         os.makedirs(directory, exist_ok=True)
         self.directory, self.run_id, self.files, self.lock = directory, run_id, {}, threading.Lock()
+        self.transcripts = set()
+
+    def note_transcript(self, path):
+        with self.lock:
+            self.transcripts.add(os.path.abspath(path))
 
     def write(self, source, sample_rate, floats):
         with self.lock:
@@ -325,6 +330,11 @@ class Recorder:
         with self.lock:
             for f in self.files.values():
                 f.close()
+            manifest = os.path.join(self.directory, self.run_id + '.json')
+            temporary = manifest + '.tmp'
+            with open(temporary, 'w', encoding='utf-8') as stream:
+                json.dump({'run_id': self.run_id, 'closed': True, 'transcripts': sorted(self.transcripts)}, stream)
+            os.replace(temporary, manifest)
 
 
 class Overlay:
@@ -561,18 +571,84 @@ class Overlay:
             widget.yview_scroll(-event.delta // 120, "units")
 
 
-def capture_loop(pa, device, source, send, stop):
-    """Read one device until stop is set, pushing float32 mono frames to send()."""
+def capture_loop(pa, device, source, send, done):
+    """Read one device until done is set or the device fails, pushing float32 mono frames to send()."""
     import pyaudiowpatch as pyaudio
     channels = int(device["maxInputChannels"])
     rate = int(device["defaultSampleRate"])
-    stream = pa.open(format=pyaudio.paInt16, channels=channels, rate=rate, input=True,
-                     input_device_index=device["index"], frames_per_buffer=rate // 10)
+    try:
+        stream = pa.open(format=pyaudio.paInt16, channels=channels, rate=rate, input=True,
+                         input_device_index=device["index"], frames_per_buffer=rate // 10)
+        while not done.is_set():
+            # a speaker loopback delivers nothing while the speaker is silent, so a blocking read
+            # would never come back to see done -- read only once a full block is waiting
+            if stream.get_read_available() < rate // 10:
+                time.sleep(0.02)
+                continue
+            data = stream.read(rate // 10, exception_on_overflow=False)
+            send(source, rate, downmix(data, channels))
+        stream.stop_stream()
+        stream.close()
+    except OSError as exc:  # device unplugged mid-run; capture() sees the thread end and reopens
+        print(f"warning: {RECORD_LABELS[source]} capture stopped ({exc})", file=sys.stderr)
+
+
+def open_devices(pa, source, send, done):
+    """One running capture thread per channel `source` asks for and the system can provide."""
+    wanted = []
+    # ponytail: missing device = warn and keep going with what's left
+    if source in ("mic", "auto"):
+        try:
+            wanted.append(("mic", pa.get_device_info_by_index(pa.get_default_input_device_info()["index"])))
+        except (OSError, LookupError) as exc:
+            print(f"warning: no microphone available, skipping mic ({exc})", file=sys.stderr)
+    if source in ("system", "auto"):
+        try:
+            wanted.append(("sys", pa.get_default_wasapi_loopback()))
+        except (OSError, LookupError) as exc:
+            print(f"warning: no speaker loopback available, skipping system audio ({exc})", file=sys.stderr)
+    threads = [threading.Thread(target=capture_loop, args=(pa, device, channel, send, done), daemon=True)
+               for channel, device in wanted]
+    for t in threads:
+        t.start()
+    return threads
+
+
+def device_count():
+    """Live number of Windows audio endpoints; PortAudio's own list is frozen at PyAudio()."""
+    winmm = ctypes.windll.winmm
+    return winmm.waveInGetNumDevs() + winmm.waveOutGetNumDevs()
+
+
+def capture(source, send, stop):
+    """Keep the default mic and speaker loopback open while headphones come and go.
+
+    Connecting headphones adds endpoints (AirPods bring a hands-free mic and a new output) and
+    makes them the defaults, but PortAudio only enumerates devices when it initializes. So when
+    the endpoint count changes, or a stream dies with its device, close everything, re-initialize
+    and open the defaults again. Doing nothing is how the mic used to go silent for the rest of
+    the meeting, and how a mic plugged in after launch was never heard.
+    """
+    import pyaudiowpatch as pyaudio
+    # ponytail: watches the endpoint count, so switching the default between devices that are
+    # already plugged in is not picked up; an IMMNotificationClient via comtypes would catch that
     while not stop.is_set():
-        data = stream.read(rate // 10, exception_on_overflow=False)
-        send(source, rate, downmix(data, channels))
-    stream.stop_stream()
-    stream.close()
+        count, done = device_count(), threading.Event()
+        pa = pyaudio.PyAudio()
+        threads = open_devices(pa, source, send, done)
+        while not stop.wait(1.0) and device_count() == count and all(t.is_alive() for t in threads):
+            pass
+        done.set()
+        for t in threads:
+            t.join(timeout=1.0)
+        if stop.is_set():
+            return  # main() hard-exits; terminate() on live streams can deadlock (see its end)
+        if any(t.is_alive() for t in threads):
+            print("warning: a capture stream is stuck on a removed device; restart to pick up "
+                  "new devices", file=sys.stderr)
+            return
+        pa.terminate()
+        time.sleep(0.5)  # let Windows finish switching the default before it is read again
 
 
 def main():
@@ -623,27 +699,8 @@ def main():
                 pass  # worker gone; read_worker() reports it and the dropdown stays usable
 
     # capture
-    import pyaudiowpatch as pyaudio
-    pa = pyaudio.PyAudio()
     stop = threading.Event()
-    threads = []
-    # ponytail: missing device = warn and keep going with what's left
-    if args.source in ("mic", "both", "auto"):
-        try:
-            mic = pa.get_device_info_by_index(pa.get_default_input_device_info()["index"])
-            threads.append(threading.Thread(target=capture_loop, args=(pa, mic, "mic", send, stop), daemon=True))
-        except (OSError, LookupError) as exc:
-            print(f"warning: no microphone available, skipping mic ({exc})", file=sys.stderr)
-    if args.source in ("system", "both", "auto"):
-        try:
-            loopback = pa.get_default_wasapi_loopback()
-            threads.append(threading.Thread(target=capture_loop, args=(pa, loopback, "sys", send, stop), daemon=True))
-        except (OSError, LookupError) as exc:
-            print(f"warning: no speaker loopback available, skipping system audio ({exc})", file=sys.stderr)
-    if not threads:
-        sys.exit("no audio devices available (mic and speaker loopback both missing)")
-    for t in threads:
-        t.start()
+    threading.Thread(target=capture, args=(args.source, send, stop), daemon=True).start()
 
     # transcripts, same layout as the Swift host (date resolved per line, so a run can cross midnight)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -663,6 +720,8 @@ def main():
         tag = f"[{language}] " if language else ""
         with open(os.path.join(args.output_dir, f"{day}{suffix}.txt"), "a", encoding="utf-8") as f:
             f.write(f"[{datetime.datetime.now():%H:%M:%S}] {label}{tag}{text}\n")
+        if recorder:
+            recorder.note_transcript(os.path.join(args.output_dir, f"{day}{suffix}.txt"))
 
     def read_worker(worker, gen, choice):
         for line in worker.stdout:

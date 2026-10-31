@@ -63,6 +63,14 @@ def pick_device(preference):
     return "cpu"
 
 
+def _admit_asr(model: str) -> None:
+    try:
+        from model_access.resources import require_local
+    except ImportError as exc:
+        raise RuntimeError("未安装 model_access，拒绝加载本地 ASR 模型") from exc
+    require_local(model, holder="livecaption-asr", backend="inprocess", purpose="asr")
+
+
 def main():
     args = parse_args()
 
@@ -70,6 +78,11 @@ def main():
     print(f"ASR device: {device}" + (" (torch cannot see a GPU)" if device == "cpu" else ""),
           file=sys.stderr)
     print(f"HF cache: {os.environ['HF_HOME']}", file=sys.stderr)
+    try:
+        _admit_asr(args.hf_model)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if "streaming" in args.hf_model.lower():
         print(f"note: {args.hf_model} looks like a cache-aware streaming checkpoint. This worker is"
               f" the offline path -- it cuts the audio into {args.chunk_seconds}s blocks and throws"
