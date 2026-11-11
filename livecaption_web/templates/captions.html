@@ -3,10 +3,7 @@
 {% block flash %}{% if error or message %}<div class="flash err" role="alert">语音识别或摘要处理遇到问题。<details class="more"><summary>查看具体原因</summary>{{ error or message }}</details></div>{% endif %}{% endblock %}
 {% block body %}
 {% if not summary_enabled %}<p>摘要功能未启用。字幕仍会保存，可在「转写记录」查看。</p>{% endif %}
-<div class="row spread">
-  <h1>实时字幕</h1>
-  <a href="/transcripts">已保存的语音文字 →</a>
-</div>
+<div class="page-heading"><div><p class="overline">工作与生活</p><h1>字幕与录音</h1><p class="note">实时查看电脑声音与麦克风的转写文字。</p></div><a class="btn" href="/transcripts">查看转写记录</a></div>
 <section class="card">
   <p>把这台电脑上的声音实时转成文字。点击「开始字幕」后，可以对着麦克风说话，或播放一段视频、会议录音。</p>
   <div class="row spread">
